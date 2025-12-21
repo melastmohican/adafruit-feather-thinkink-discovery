@@ -13,13 +13,13 @@ defmt = "1"
 defmt-rtt = "1"
 panic-probe = { version = "1", features = ["print-defmt"] }
 adafruit-feather-rp2040 = "0.8.0"
+embedded-graphics = "0.8.1"
+embedded-hal-bus = "0.3.0"
 
 [dev-dependencies]
 smart-leds = "0.3.0"
 ws2812-pio = "0.8.0"
 ssd1681 = "0.3.0"
-embedded-graphics = "0.8.1"
-embedded-hal-bus = "0.3.0"
 format_no_std = "1.2.0"
 tinybmp = "0.6.0"
 

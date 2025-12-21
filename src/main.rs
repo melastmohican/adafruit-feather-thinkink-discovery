@@ -12,9 +12,8 @@ use panic_probe as _;
 
 use adafruit_feather_rp2040 as bsp;
 
-
 use bsp::hal::{
-    clocks::{Clock, init_clocks_and_plls},
+    clocks::{init_clocks_and_plls, Clock},
     pac,
     sio::Sio,
     watchdog::Watchdog,

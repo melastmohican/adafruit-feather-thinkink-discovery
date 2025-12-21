@@ -20,8 +20,10 @@ cargo generate --git https://github.com/rp-rs/rp2040-project-template
 
 ## Hardware Supported
 
-- **Board**: [Adafruit RP2040 Feather ThinkInk](https://www.adafruit.com/product/5087)
-- **Display**: Integrated 1.54" Tri-Color (Red/Black/White) e-Paper display (SSD1681).
+- **Board**: [Adafruit RP2040 Feather ThinkInk](https://www.adafruit.com/product/5727)
+- **Displays**: Both displays connect via the onboard modular 24-pin FPC connector:
+  - 1.54" Tri-Color (Red/Black/White) e-Paper display ([GDEM0154Z90](https://www.good-display.com/product/436.html)). Controller: **SSD1681**.
+  - 2.13" Quad-Color (Red/Yellow/Black/White) e-Paper display ([Product 6373](https://www.adafruit.com/product/6373)). Controller: **JD79661**.
 - **NeoPixel**: Onboard WS2812 (Power: GP20, Data: GP21).
 - **LED**: Onboard Red LED (GP13).
 
@@ -61,15 +63,38 @@ Displays a high-quality, dithered tri-color image (`mocha200x200.bmp`) on the e-
 cargo run --example ssd1681_image
 ```
 
+### 5. JD79661 Quad-Color Text (`examples/jd79661.rs`)
+
+Displays text and shapes in 4 colors (Black, White, Red, Yellow) on the 2.13" display ([Product 6373](https://www.adafruit.com/product/6373)).
+
+```bash
+cargo run --example jd79661
+```
+
+### 6. JD79661 Quad-Color Image (`examples/jd79661_image.rs`)
+
+Displays a 4-color dithered image on the 2.13" JD79661 display.
+
+```bash
+cargo run --example jd79661_image
+```
+
 ## Utilities
 
-### Image Conversion Script (`examples/convert_bmp.sh`)
+### Image Conversion Scripts
 
-Automates the conversion of standard JPG/PNG images into the high-quality, dithered 3-color (Black, Red, White) BMP format required for the SSD1681.
+#### Tri-Color (1.54" SSD1681)
 
 ```bash
 cd examples
-./convert_bmp.sh my_image.jpg output.bmp
+./convert_bmp_tri.sh my_image.jpg output.bmp
+```
+
+#### Quad-Color (2.13" JD79661)
+
+```bash
+cd examples
+./convert_bmp_quad.sh my_image.jpg output.bmp
 ```
 
 ## Development Features
