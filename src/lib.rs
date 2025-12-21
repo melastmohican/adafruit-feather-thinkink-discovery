@@ -186,7 +186,7 @@ where
 
 pub const WIDTH: usize = 250;
 pub const HEIGHT: usize = 122;
-pub const BUF_SIZE: usize = (WIDTH * HEIGHT + 7) / 8;
+pub const BUF_SIZE: usize = (WIDTH * HEIGHT).div_ceil(8);
 
 pub struct DisplayBuffer {
     pub bw: [u8; BUF_SIZE],
