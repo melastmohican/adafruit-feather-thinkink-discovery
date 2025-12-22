@@ -79,6 +79,9 @@ Displays a 4-color dithered image on the 2.13" JD79661 display.
 cargo run --example jd79661_image
 ```
 
+![ThinkINK JD79661 Quad-Color Image](thinkink_jd79661.jpg)
+
+
 ## Utilities
 
 ### Image Conversion Scripts
