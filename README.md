@@ -81,6 +81,37 @@ cargo run --example jd79661_image
 
 ![ThinkINK JD79661 Quad-Color Image](thinkink_jd79661.jpg)
 
+### 7. BME280 Sensor (`examples/bme280_i2c.rs`)
+
+Reads temperature, humidity, and pressure from a BME280 sensor via the STEMMA QT (I2C1) port.
+
+```bash
+cargo run --example bme280_i2c
+```
+
+### 8. SSD1306 OLED Image (`examples/ssd1306.rs`)
+
+Displays a 1-bit black and white image on an SSD1306 OLED via STEMMA QT.
+
+```bash
+cargo run --example ssd1306
+```
+
+### 9. SSD1306 OLED Text (`examples/ssd1306_text.rs`)
+
+Displays text and graphic primitives on an SSD1306 OLED via STEMMA QT.
+
+```bash
+cargo run --example ssd1306_text
+```
+
+### 10. Combined BME280 + SSD1306 (`examples/bme280_ssd1306.rs`)
+
+Reads data from the BME280 and displays live measurements on the SSD1306 OLED. Useful for seeing data without a hardware debugger.
+
+```bash
+cargo run --example bme280_ssd1306
+```
 
 ## Utilities
 
