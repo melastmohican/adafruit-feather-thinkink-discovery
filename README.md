@@ -113,6 +113,25 @@ Reads data from the BME280 and displays live measurements on the SSD1306 OLED. U
 cargo run --example bme280_ssd1306
 ```
 
+### 11. USB Serial Defmt (`examples/usb_serial_defmt.rs`)
+
+Demonstrates `defmt` logging over the board's native USB Serial port. This is ideal for high-performance logging without a hardware debugger.
+
+**How to run:**
+
+1. Put the board in BOOTSEL mode (hold BOOT, press RESET).
+2. Run the example:
+
+    ```bash
+    cargo run --example usb_serial_defmt
+    ```
+
+3. In a **separate terminal**, decode the logs:
+
+    ```bash
+    cat /dev/cu.usbmodem* | defmt-print -e target/thumbv6m-none-eabi/debug/examples/usb_serial_defmt
+    ```
+
 ## Utilities
 
 ### Image Conversion Scripts
