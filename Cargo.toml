@@ -9,16 +9,11 @@ cortex-m = "0.7"
 cortex-m-rt = "0.7"
 embedded-hal = { version = "1.0.0" }
 
-defmt = "1"
-defmt-rtt = "1"
-defmt-bbq = "0.1.0"
-bbqueue = { version = "0.5.1", features = ["thumbv6"] }
-panic-probe = { version = "1", features = ["print-defmt"] }
 adafruit-feather-rp2040 = "0.8.0"
 embedded-graphics = "0.8.1"
-embedded-hal-bus = "0.3.0"
-usb-device = "0.3.1"
-usbd-serial = "0.2.2"
+panic-probe = { version = "1", features = ["print-defmt"] }
+defmt = "1"
+defmt-rtt = "1"
 
 [dev-dependencies]
 smart-leds = "0.3.0"
@@ -29,6 +24,13 @@ tinybmp = "0.6.0"
 bme280 = "0.5.1"
 ssd1306 = "0.9.0"
 heapless = "0.8.0"
+usb-device = "0.3.1"
+usbd-serial = "0.2.2"
+log = "0.4.20"
+critical-section = "1.1.2"
+defmt-bbq = "0.1.0"
+bbqueue = { version = "0.5.1", features = ["thumbv6"] }
+embedded-hal-bus = "0.3.0"
 
 # If you're not going to use a Board Support Package you'll need these:
 # rp2040-hal = { version="0.10", features=["rt", "critical-section-impl"] }
