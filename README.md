@@ -156,6 +156,8 @@ Displays images (Ferris and Rust logo) on a 240x240 round LCD (GC9A01) via SPI1.
 cargo run --example gc9a01_spi
 ```
 
+![GC9A01 SPI Image](gc9a01.png)
+
 ### 14. GC9A01 SPI Text (`examples/gc9a01_spi_text.rs`)
 
 Displays text and geometric shapes on a 240x240 round LCD.
