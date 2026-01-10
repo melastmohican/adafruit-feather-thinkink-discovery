@@ -170,7 +170,7 @@ fn main() -> ! {
 
             info!("Simple log heartbeat #{}", counter);
 
-            if counter % 5 == 0 {
+            if counter.is_multiple_of(5) {
                 warn!("This is a warning at count {}", counter);
             }
         }

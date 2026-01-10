@@ -128,7 +128,7 @@ fn main() -> ! {
             // These messages will be binary-encoded and decoded by defmt-print
             defmt::info!("Heartbeat from Feather RP2040! Counter: {}", counter);
 
-            if counter % 5 == 0 {
+            if counter.is_multiple_of(5) {
                 defmt::warn!("This is a warning at count {}", counter);
             }
         }

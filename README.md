@@ -132,6 +132,38 @@ Demonstrates `defmt` logging over the board's native USB Serial port. This is id
     cat /dev/cu.usbmodem* | defmt-print -e target/thumbv6m-none-eabi/debug/examples/usb_serial_defmt
     ```
 
+### 12. USB Serial Log (`examples/usb_serial_log.rs`)
+
+Simple text logging over USB Serial that works with `screen` or `minicom` (no decoder required).
+
+```bash
+cargo run --example usb_serial_log
+```
+
+### 13. GC9A01 SPI Image (`examples/gc9a01_spi.rs`)
+
+Displays images (Ferris and Rust logo) on a 240x240 round LCD (GC9A01) via SPI1.
+
+**Wiring:**
+
+- **SCK**: GPIO 14
+- **MOSI**: GPIO 15
+- **CS**: GPIO 6
+- **DC**: GPIO 5
+- **RST**: GPIO 9
+
+```bash
+cargo run --example gc9a01_spi
+```
+
+### 14. GC9A01 SPI Text (`examples/gc9a01_spi_text.rs`)
+
+Displays text and geometric shapes on a 240x240 round LCD.
+
+```bash
+cargo run --example gc9a01_spi_text
+```
+
 ## Utilities
 
 ### Image Conversion Scripts

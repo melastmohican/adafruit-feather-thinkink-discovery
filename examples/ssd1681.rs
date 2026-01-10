@@ -181,7 +181,7 @@ fn draw_ruler(display: &mut Display1in54) {
         if col % 50 == 0 {
             let mut buf = [0u8; 4];
             let label = format_no_std::show(&mut buf, format_args!("{}", col)).unwrap();
-            draw_text(display, &label, col as i32, 12);
+            draw_text(display, label, col as i32, 12);
         }
     }
 }
