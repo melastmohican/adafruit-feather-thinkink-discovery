@@ -113,7 +113,23 @@ Reads data from the BME280 and displays live measurements on the SSD1306 OLED. U
 cargo run --example bme280_ssd1306
 ```
 
-### 11. USB Serial Defmt (`examples/usb_serial_defmt.rs`)
+### 11. SH1107 OLED Image (`examples/sh1107_i2c.rs`)
+
+Displays a 1-bit black and white image on the Adafruit FeatherWing OLED - 128x64 OLED (SH1107).
+
+**Hardware:**
+
+- [Adafruit FeatherWing OLED - 128x64 OLED](https://www.adafruit.com/product/4650)
+
+**Wiring:**
+
+- Stack the FeatherWing on top of the Feather board using the header pins.
+
+```bash
+cargo run --example sh1107_i2c
+```
+
+### 12. USB Serial Defmt (`examples/usb_serial_defmt.rs`)
 
 Demonstrates `defmt` logging over the board's native USB Serial port. This is ideal for high-performance logging without a hardware debugger.
 
@@ -132,7 +148,7 @@ Demonstrates `defmt` logging over the board's native USB Serial port. This is id
     cat /dev/cu.usbmodem* | defmt-print -e target/thumbv6m-none-eabi/debug/examples/usb_serial_defmt
     ```
 
-### 12. USB Serial Log (`examples/usb_serial_log.rs`)
+### 13. USB Serial Log (`examples/usb_serial_log.rs`)
 
 Simple text logging over USB Serial that works with `screen` or `minicom` (no decoder required).
 
@@ -140,7 +156,7 @@ Simple text logging over USB Serial that works with `screen` or `minicom` (no de
 cargo run --example usb_serial_log
 ```
 
-### 13. GC9A01 SPI Image (`examples/gc9a01_spi.rs`)
+### 14. GC9A01 SPI Image (`examples/gc9a01_spi.rs`)
 
 Displays images (Ferris and Rust logo) on a 240x240 round LCD (GC9A01) via SPI1.
 
@@ -158,7 +174,7 @@ cargo run --example gc9a01_spi
 
 ![GC9A01 SPI Image](gc9a01.png)
 
-### 14. GC9A01 SPI Text (`examples/gc9a01_spi_text.rs`)
+### 15. GC9A01 SPI Text (`examples/gc9a01_spi_text.rs`)
 
 Displays text and geometric shapes on a 240x240 round LCD.
 

@@ -34,6 +34,7 @@ critical-section = "1.1.2"
 defmt-bbq = "0.1.0"
 bbqueue = { version = "0.5.1", features = ["thumbv6"] }
 embedded-hal-bus = "0.3.0"
+sh1107-driver = { version = "0.1.0", features = ["graphics"] }
 
 # If you're not going to use a Board Support Package you'll need these:
 # rp2040-hal = { version="0.10", features=["rt", "critical-section-impl"] }
