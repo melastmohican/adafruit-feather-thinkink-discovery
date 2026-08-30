@@ -182,6 +182,153 @@ Displays text and geometric shapes on a 240x240 round LCD.
 cargo run --example gc9a01_spi_text
 ```
 
+### 16. SSD1680 2.13" Monochrome (`examples/ssd1680_gdem0213b74_epd.rs`)
+
+`GDEM0213B74` (122x250, Adafruit 6383) driven through the [`epdsi`](https://crates.io/crates/epdsi)
+framework. Full refresh, then six genuinely differential partial updates with the logos swapping
+each pass, then a full-waveform cleanup. Port of the Raspberry Pi Pico 2 example, with everything
+above `main` unchanged.
+
+```bash
+cargo run --release --example ssd1680_gdem0213b74_epd
+```
+
+### 17. SSD1680 2.66" Tri-Color (`examples/ssd1680_gdey0266z90_epd.rs`)
+
+`GDEY0266Z90` (152x296 Black/White/Red, sold by Waveshare as the 2.66" e-Paper Module (B)).
+Exercises all four SSD1680 refresh modes — `Full`, windowed `Full`, `FastFull` and
+`BaseMap`/`Partial` — and times each, so the cost of every mode on colour glass is measurable
+rather than assumed. Takes about two minutes.
+
+The Arduino sketches this panel was first brought up with were written for **this** board, so it is
+the one place GxEPD2 and `epdsi` can be compared on identical hardware.
+
+```bash
+cargo run --release --example ssd1680_gdey0266z90_epd
+```
+
+### 18. SSD1680 Partial-Refresh Bisect (`examples/epd_diag_partial.rs`)
+
+Diagnostic rather than demo, for the 2.13" panel. Times three cases — full frame on `Full`, full
+frame on `Partial`, and a banded window on `Partial` — so a partial-refresh fault can be narrowed
+to the fast LUT or the windowed write. The same test exists in `rust-rpico2-discovery` and
+`xiao-esp32c3-blinky`, so figures are directly comparable across hosts; that cross-host comparison
+is what identified a failing XIAO ESP32-C3.
+
+```bash
+cargo run --release --example epd_diag_partial
+```
+
+> Examples 16-18 report over USB serial and print nothing until the panel work finishes — see
+> [Logging without a probe](#logging-without-a-probe).
+
+## Flashing and logging
+
+Three routes, in `.cargo/config.toml`. Only the first needs no extra hardware and no working
+`picotool`, which is why it is the current default.
+
+### 1. `elf2uf2-rs` — mass storage (default)
+
+```toml
+runner = "elf2uf2-rs -d"
+```
+
+```bash
+# hold BOOT, press RESET, release BOOT — the RPI-RP2 volume appears
+cargo run --example blinky
+```
+
+This converts the ELF to UF2 and copies it to the mounted `RPI-RP2` volume. That volume *is* the
+RP2040 ROM bootloader's mass-storage interface, so this works whenever the board enumerates in
+BOOT mode at all, with no debug hardware. The equivalent by hand, useful when `cargo run` is
+unavailable:
+
+```bash
+elf2uf2-rs target/thumbv6m-none-eabi/debug/examples/<name> /tmp/fw.uf2
+cp /tmp/fw.uf2 /Volumes/RPI-RP2/
+```
+
+`cp` will report `could not copy extended attributes` — that is macOS complaining about a FAT
+volume, and it is harmless: the data blocks land first, the bootloader flashes them and reboots,
+which is why the volume disappears mid-copy.
+
+### 2. `picotool` — PICOBOOT
+
+```toml
+runner = "picotool load --update --verify --execute -t elf"
+```
+
+Uses a *different* bootloader interface from route 1 — vendor-specific USB over libusb rather than
+mass storage. **Known broken here:** picotool v2.3.0 on Apple Silicon segfaults (exit 139) on any
+command touching USB, `picotool info` included. Its file-only paths such as `uf2 convert` still
+work, so the fault is in its USB layer rather than the binary as a whole. Check with:
+
+```bash
+picotool info; echo "exit=$?"   # 139 means the segfault is still there
+```
+
+Note that `picotool info | head` masks this — you get `head`'s exit code, not picotool's.
+
+### 3. `probe-rs` — SWD
+
+```toml
+runner = "probe-rs run --chip RP2040 --protocol swd"
+```
+
+The nicest option: flashing plus live RTT logging plus stack unwind on panic. **No SWD connector
+is fitted on this board** — SWCLK/SWDIO are pads on the back, plus an unpopulated 2×5 0.05"
+header footprint, so it needs soldering. A Raspberry Pi Debug Probe's "D" port carries
+SWCLK / GND / SWDIO; the probe does not power the target, so both stay on their own USB.
+
+### Logging without a probe
+
+`defmt` output normally goes over RTT, which needs route 3. Without a probe, use `defmt-bbq` over
+USB CDC instead — see `usb_serial_defmt.rs` and the three e-paper examples.
+
+USB CDC needs `usb_dev.poll()` every few milliseconds, and an e-paper refresh blocks for seconds
+at a time. So the e-paper examples **run the panel silently and only bring USB up at the end**.
+That means the serial device does not exist while the panel is working:
+
+| Example | Panel work before USB appears |
+| :--- | ---: |
+| `epd_diag_partial` | ~15 s |
+| `ssd1680_gdem0213b74_epd` | ~20 s |
+| `ssd1680_gdey0266z90_epd` | ~2 min |
+
+> **`zsh: no matches found: /dev/cu.usbmodem*` means the device has not enumerated yet**, not that
+> anything failed. The catch is that **`cargo run` returns as soon as flashing completes** — your
+> prompt comes back and it looks finished, but the board is only just starting its panel work with
+> USB down. Pasting the `cat` command straight after is guaranteed to be too early.
+
+So wait for it rather than guessing. Only the ELF path changes between examples:
+
+```bash
+for _ in $(seq 180); do ls /dev/cu.usbmodemEPD* >/dev/null 2>&1 && break; sleep 1; done
+cat /dev/cu.usbmodemEPD* | defmt-print -e target/thumbv6m-none-eabi/release/examples/<name>
+```
+
+`cat` does not exit on its own — Ctrl-C once the output has printed. The frames are binary, so
+`screen` shows garbage; `defmt-print` is required, and it must be given the **matching** ELF —
+a mismatch produces garbled or missing lines rather than an error. Every example here is run
+with `--release`, so the ELF path only ever differs in its final component.
+
+### Identifying which firmware is on the board
+
+Every example uses the **same USB serial** (`EPD`), so the device node is always
+`/dev/cu.usbmodemEPD*` and the command above never changes — no per-example lookup table, and
+nothing to remember as more panels are added.
+
+Identification lives in the USB **product string** instead, which does not affect the device name:
+
+```bash
+ioreg -r -c IOUSBHostDevice -l | grep -o '"USB Product Name" = "Feather[^"]*"'
+# "USB Product Name" = "Feather RP2040 GDEY0266Z90"
+```
+
+New examples should follow the same pattern: keep `.serial_number("EPD")`, and put the panel or
+purpose in `.product("Feather RP2040 <thing>")`. The first decoded log line should name it too, so
+the information survives even if you only have the log.
+
 ## Utilities
 
 ### Image Conversion Scripts

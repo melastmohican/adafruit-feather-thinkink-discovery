@@ -1,10 +1,24 @@
 [target.'cfg(all(target_arch = "arm", target_os = "none"))']
 # Choose a default "cargo run" tool (see README for more info)
-# - `probe-rs` provides flashing and defmt via a hardware debugger, and stack unwind on panic
-# - `picotool` loads firmware over USB when the rp2040 is in boot mode
+# - `elf2uf2-rs -d` converts to UF2 and copies it to the mounted RPI-RP2 volume. No probe, no
+#   picotool. This is the ROM bootloader's own mass-storage path, so it works whenever the board
+#   enumerates in BOOT mode at all.
+# - `probe-rs` provides flashing and defmt via a hardware debugger, and stack unwind on panic.
+#   Needs SWCLK/SWDIO wired to a debug probe; there is no SWD connector fitted on this board.
+# - `picotool` loads firmware over USB when the rp2040 is in boot mode, via the bootloader's
+#   PICOBOOT interface rather than mass storage.
+#
+# Currently on elf2uf2-rs: picotool v2.3.0 on Apple Silicon segfaults (exit 139) on any command
+# that touches USB — `picotool info` included — which breaks `cargo run` entirely. Its file-only
+# paths such as `uf2 convert` still work, so the fault is in its USB/libusb layer, not the binary
+# as a whole. Switch back once that is fixed.
+#
+# Do not add `-s` to elf2uf2-rs: it opens a serial terminal, and defmt frames are binary. Decode
+# them instead with, e.g.:
+#   cat /dev/cu.usbmodem* | defmt-print -e target/thumbv6m-none-eabi/debug/examples/<name>
+runner = "elf2uf2-rs -d"
 # runner = "probe-rs run --chip RP2040 --protocol swd"
 # runner = "picotool load --update --verify --execute -t elf"
-runner = "picotool load --update --verify --execute -t elf"
 linker = "flip-link"
 rustflags = [
   "-C", "link-arg=--nmagic",
