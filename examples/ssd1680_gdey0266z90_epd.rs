@@ -76,6 +76,23 @@
 //!
 //! **Swap panels with the board unpowered.**
 //!
+//! ## Measured output
+//!
+//! ```text
+//! === GDEY0266Z90 2.66" Tri-Color (epdsi SSD1680, Feather RP2040) ===
+//!   Phase 1 Full: 20044 ms
+//!   Phase 2 windowed Full: 20045 ms
+//!   Phase 2 windowed Full: 20045 ms
+//!   Phase 3 FastFull: 16176 ms
+//!   Phase 4 BaseMap: 19905 ms
+//!   Phase 4 Partial: 19905 ms
+//!   Phase 4 Partial: 19905 ms
+//! === done ===
+//! ```
+//!
+//! Every stage within 5 ms of RP2350, including the 19 % FastFull saving — which confirms that
+//! saving is a property of the glass's OTP waveform rather than of the host.
+//!
 //! ## Run
 //!
 //! Hold BOOT, press RESET, release BOOT so the `RPI-RP2` volume appears, then:
@@ -89,7 +106,7 @@
 //! This waits for it and decodes:
 //!
 //! ```bash
-//! for _ in $(seq 180); do ls /dev/cu.usbmodemEPD* >/dev/null 2>&1 && break; sleep 1; done
+//! until ls /dev | grep -q "^cu\.usbmodemEPD"; do sleep 1; done
 //! cat /dev/cu.usbmodemEPD* | defmt-print -e target/thumbv6m-none-eabi/release/examples/ssd1680_gdey0266z90_epd
 //! ```
 //!
@@ -115,7 +132,6 @@ use adafruit_feather_rp2040 as bsp;
 use bsp::hal::clocks::init_clocks_and_plls;
 use bsp::hal::fugit::RateExtU32;
 use bsp::hal::gpio::{FunctionSpi, Pins};
-use bsp::hal::usb::UsbBus;
 use bsp::hal::{spi, Clock, Sio, Timer, Watchdog};
 use bsp::{entry, pac, XOSC_CRYSTAL_FREQ};
 
@@ -123,9 +139,7 @@ use bsp::{entry, pac, XOSC_CRYSTAL_FREQ};
 use defmt_bbq as _;
 use panic_probe as _;
 
-use usb_device::class_prelude::*;
-use usb_device::prelude::*;
-use usbd_serial::SerialPort;
+use adafruit_feather_thinkink_discovery::usb_report::{report_and_park, Report, UsbParts};
 
 use embedded_graphics::geometry::{Point, Size};
 use embedded_graphics::mono_font::ascii::{FONT_10X20, FONT_6X10};
@@ -357,7 +371,8 @@ fn draw_band_bar(plane: &mut PageBuffer, count: u32, color: BinaryColor) {
 
 #[entry]
 fn main() -> ! {
-    let mut bbq = defmt_bbq::init().unwrap();
+    let bbq = defmt_bbq::init().unwrap();
+    let mut report = Report::new();
 
     let mut pac = pac::Peripherals::take().unwrap();
     let mut watchdog = Watchdog::new(pac.WATCHDOG);
@@ -423,12 +438,8 @@ fn main() -> ! {
     let ferris_bmp: Bmp<BinaryColor> = Bmp::from_slice(include_bytes!("ferrisbw.bmp")).unwrap();
     let rust_bmp: Bmp<BinaryColor> = Bmp::from_slice(include_bytes!("rustbw.bmp")).unwrap();
 
-    // Timings are collected here and reported once USB is up: full, window1, window2, fastfull,
-    // basemap, partial1, partial2.
-    let mut ms = [0u64; 7];
-
     // --- Phase 1: Full tri-color refresh. ---
-    ms[0] = {
+    let phase1 = {
         let mut bw = PageBuffer::new(&mut bw_buf, GDEY0266Z90::WIDTH, GDEY0266Z90::HEIGHT, 0);
         let mut red = PageBuffer::new(&mut red_buf, GDEY0266Z90::WIDTH, GDEY0266Z90::HEIGHT, 0);
 
@@ -437,6 +448,7 @@ fn main() -> ! {
 
         timed_refresh(&mut epd, &mut timer)
     };
+    report.record("Phase 1 Full", phase1);
 
     timer.delay_ms(2000);
 
@@ -463,7 +475,7 @@ fn main() -> ! {
         }
 
         write_band(&mut epd, &bw_buf[..BAND_BYTES], &red_buf[..BAND_BYTES]);
-        ms[count as usize] = timed_refresh(&mut epd, &mut timer);
+        report.record("Phase 2 windowed Full", timed_refresh(&mut epd, &mut timer));
         timer.delay_ms(1000);
     }
 
@@ -471,7 +483,7 @@ fn main() -> ! {
     epd.controller_mut()
         .set_refresh_mode(Ssd168xRefreshMode::FastFull);
 
-    ms[3] = {
+    let phase3 = {
         let mut bw = PageBuffer::new(&mut bw_buf, GDEY0266Z90::WIDTH, GDEY0266Z90::HEIGHT, 0);
         bw.clear_byte(0xFF);
         let mut red = PageBuffer::new(&mut red_buf, GDEY0266Z90::WIDTH, GDEY0266Z90::HEIGHT, 0);
@@ -482,6 +494,7 @@ fn main() -> ! {
 
         timed_refresh(&mut epd, &mut timer)
     };
+    report.record("Phase 3 FastFull", phase3);
 
     timer.delay_ms(2000);
 
@@ -512,7 +525,7 @@ fn main() -> ! {
 
     // NO_RED_BAND rather than the drawn red band: 0x00 is *no* red.
     write_band(&mut epd, &bw_buf[..BAND_BYTES], &NO_RED_BAND);
-    ms[4] = timed_refresh(&mut epd, &mut timer);
+    report.record("Phase 4 BaseMap", timed_refresh(&mut epd, &mut timer));
 
     timer.delay_ms(1000);
 
@@ -541,7 +554,7 @@ fn main() -> ! {
         }
 
         write_band(&mut epd, &bw_buf[..BAND_BYTES], &red_buf[..BAND_BYTES]);
-        ms[4 + count as usize] = timed_refresh(&mut epd, &mut timer);
+        report.record("Phase 4 Partial", timed_refresh(&mut epd, &mut timer));
         timer.delay_ms(1000);
     }
 
@@ -553,75 +566,23 @@ fn main() -> ! {
     epd.set_cursor(0, 0).unwrap();
     epd.sleep(&mut timer).unwrap();
 
-    // ---------------------------------------------------------------------------------------
-    // Panel work is done. Bring USB up and report.
-    // ---------------------------------------------------------------------------------------
-
-    let usb_bus = UsbBusAllocator::new(UsbBus::new(
-        pac.USBCTRL_REGS,
-        pac.USBCTRL_DPRAM,
-        clocks.usb_clock,
-        true,
+    // Panel work is done. Hand the timings to the shared reporter, which brings USB up and
+    // parks; see `usb_report` in this crate for why nothing can be logged before this point.
+    //
+    // Full vs FastFull is the measurement worth reading: on RP2350 this glass gave 20045 vs 16181,
+    // a 19% saving. Good Display quote ~20000 vs ~19000 on their own glass, so the saving is a
+    // property of the OTP waveform rather than the host -- measure, do not assume.
+    report_and_park(
+        "GDEY0266Z90 2.66\" Tri-Color (epdsi SSD1680, Feather RP2040)",
+        "Feather RP2040 GDEY0266Z90",
+        &report,
+        UsbParts {
+            regs: pac.USBCTRL_REGS,
+            dpram: pac.USBCTRL_DPRAM,
+            clock: clocks.usb_clock,
+        },
         &mut pac.RESETS,
-    ));
-
-    let mut serial = SerialPort::new(&usb_bus);
-    let mut usb_dev = UsbDeviceBuilder::new(&usb_bus, UsbVidPid(0x16c0, 0x27dd))
-        .strings(&[StringDescriptors::default()
-            .manufacturer("Adafruit")
-            .product("Feather RP2040 GDEY0266Z90")
-            // One shared serial number across every example in this repo, deliberately: macOS
-            // builds the device node from it, so `/dev/cu.usbmodemEPD*` is the same command
-            // whatever is flashed and there is no per-example lookup table to remember. Which
-            // firmware is running is carried by the product string above instead, readable with
-            //   ioreg -r -c IOUSBHostDevice -l | grep -o '"USB Product Name" = "Feather[^"]*"'
-            // and stated again in the first decoded log line.
-            .serial_number("EPD")])
-        .unwrap()
-        .device_class(2) // CDC
-        .build();
-
-    let mut reported = false;
-
-    loop {
-        watchdog.feed();
-
-        if usb_dev.poll(&mut [&mut serial]) {
-            let mut rx = [0u8; 64];
-            let _ = serial.read(&mut rx);
-        }
-
-        if !reported && usb_dev.state() == UsbDeviceState::Configured {
-            defmt::info!("=== GDEY0266Z90 2.66\" Tri-Color (epdsi SSD1680, Feather RP2040) ===");
-            defmt::info!("  Phase 1 Full:            {} ms  (RP2350 20045)", ms[0]);
-            defmt::info!("  Phase 2 windowed Full 1: {} ms  (RP2350 20049)", ms[1]);
-            defmt::info!("  Phase 2 windowed Full 2: {} ms  (RP2350 20051)", ms[2]);
-            defmt::info!("  Phase 3 FastFull:        {} ms  (RP2350 16181)", ms[3]);
-            defmt::info!("  Phase 4 BaseMap:         {} ms  (RP2350 19909)", ms[4]);
-            defmt::info!("  Phase 4 Partial 1:       {} ms  (RP2350 19908)", ms[5]);
-            defmt::info!("  Phase 4 Partial 2:       {} ms  (RP2350 19908)", ms[6]);
-            defmt::info!(
-                "Full {} ms vs FastFull {} ms. On RP2350 this glass gave 20045 vs 16181, ~19% \
-                 faster; Good Display quote ~20000 vs ~19000 on their own. The saving is the OTP \
-                 waveform, so it varies by glass rather than by host.",
-                ms[0],
-                ms[3]
-            );
-            defmt::info!("=== done, controller asleep ===");
-            reported = true;
-        }
-
-        while let Ok(grant) = bbq.read() {
-            if usb_dev.state() == UsbDeviceState::Configured {
-                if let Ok(written) = serial.write(&grant) {
-                    grant.release(written);
-                } else {
-                    break;
-                }
-            } else {
-                let len = grant.len();
-                grant.release(len);
-            }
-        }
-    }
+        &mut watchdog,
+        bbq,
+    )
 }

@@ -42,6 +42,19 @@
 //! Connections are fixed by that socket — SCK GP22, MOSI GP23, CS GP19, DC GP18, RST GP17,
 //! BUSY GP16. These are SPI0 on the RP2040, even though the Arduino core calls the port SPI1.
 //!
+//! ## Measured output
+//!
+//! ```text
+//! === SSD1680 partial-refresh bisect (Feather RP2040 ThinkInk) ===
+//!   A  full frame, Full: 3893 ms
+//!   B  full frame, Partial (RP2350 1018, healthy C3 ~1017, faulty C3 98):   1018 ms
+//!   C  band, Partial       (RP2350 1018, healthy C3 ~1017, faulty C3 333):  1018 ms
+//! === done ===
+//! ```
+//!
+//! Two independent healthy hosts agreeing to a millisecond is what makes the faulty C3 row
+//! obviously a host fault rather than a driver one.
+//!
 //! ## Run
 //!
 //! Hold BOOT, press RESET, release BOOT so the `RPI-RP2` volume appears, then:
@@ -55,7 +68,7 @@
 //! waits for it and decodes:
 //!
 //! ```bash
-//! for _ in $(seq 60); do ls /dev/cu.usbmodemEPD* >/dev/null 2>&1 && break; sleep 1; done
+//! until ls /dev | grep -q "^cu\.usbmodemEPD"; do sleep 1; done
 //! cat /dev/cu.usbmodemEPD* | defmt-print -e target/thumbv6m-none-eabi/release/examples/epd_diag_partial
 //! ```
 //!
@@ -85,7 +98,6 @@ use adafruit_feather_rp2040 as bsp;
 use bsp::hal::clocks::init_clocks_and_plls;
 use bsp::hal::fugit::RateExtU32;
 use bsp::hal::gpio::{FunctionSpi, Pins};
-use bsp::hal::usb::UsbBus;
 use bsp::hal::{spi, Clock, Sio, Timer, Watchdog};
 use bsp::{entry, pac, XOSC_CRYSTAL_FREQ};
 
@@ -93,9 +105,7 @@ use bsp::{entry, pac, XOSC_CRYSTAL_FREQ};
 use defmt_bbq as _;
 use panic_probe as _;
 
-use usb_device::class_prelude::*;
-use usb_device::prelude::*;
-use usbd_serial::SerialPort;
+use adafruit_feather_thinkink_discovery::usb_report::{report_and_park, Report, UsbParts};
 
 use embedded_hal::delay::DelayNs;
 use embedded_hal_bus::spi::ExclusiveDevice;
@@ -121,7 +131,8 @@ fn stripes(buf: &mut [u8], rows: usize, phase: usize) {
 
 #[entry]
 fn main() -> ! {
-    let mut bbq = defmt_bbq::init().unwrap();
+    let bbq = defmt_bbq::init().unwrap();
+    let mut report = Report::new();
 
     let mut pac = pac::Peripherals::take().unwrap();
     let mut watchdog = Watchdog::new(pac.WATCHDOG);
@@ -198,7 +209,10 @@ fn main() -> ! {
 
     let t = timer.get_counter().ticks();
     epd.refresh(&mut timer).unwrap();
-    let a_ms = (timer.get_counter().ticks() - t) / 1000;
+    report.record(
+        "A  full frame, Full",
+        (timer.get_counter().ticks() - t) / 1000,
+    );
     timer.delay_ms(3000);
 
     // --- B: full frame, Partial mode. Panel: stripes invert. ---
@@ -213,7 +227,10 @@ fn main() -> ! {
 
     let t = timer.get_counter().ticks();
     epd.refresh(&mut timer).unwrap();
-    let b_ms = (timer.get_counter().ticks() - t) / 1000;
+    report.record(
+        "B  full frame, Partial",
+        (timer.get_counter().ticks() - t) / 1000,
+    );
     timer.delay_ms(3000);
 
     // Keep the previous-image RAM in step so C diffs against what is on the panel.
@@ -233,80 +250,21 @@ fn main() -> ! {
 
     let t = timer.get_counter().ticks();
     epd.refresh(&mut timer).unwrap();
-    let c_ms = (timer.get_counter().ticks() - t) / 1000;
+    report.record("C  band, Partial", (timer.get_counter().ticks() - t) / 1000);
 
-    // ---------------------------------------------------------------------------------------
-    // Panel work is done. Bring USB up and report.
-    // ---------------------------------------------------------------------------------------
-
-    let usb_bus = UsbBusAllocator::new(UsbBus::new(
-        pac.USBCTRL_REGS,
-        pac.USBCTRL_DPRAM,
-        clocks.usb_clock,
-        true,
+    // Panel work is done. Hand the timings to the shared reporter, which brings USB up and
+    // parks; see `usb_report` in this crate for why nothing can be logged before this point.
+    report_and_park(
+        "SSD1680 partial-refresh bisect (Feather RP2040 ThinkInk)",
+        "Feather RP2040 EPD diag",
+        &report,
+        UsbParts {
+            regs: pac.USBCTRL_REGS,
+            dpram: pac.USBCTRL_DPRAM,
+            clock: clocks.usb_clock,
+        },
         &mut pac.RESETS,
-    ));
-
-    let mut serial = SerialPort::new(&usb_bus);
-    let mut usb_dev = UsbDeviceBuilder::new(&usb_bus, UsbVidPid(0x16c0, 0x27dd))
-        .strings(&[StringDescriptors::default()
-            .manufacturer("Adafruit")
-            .product("Feather RP2040 EPD diag")
-            // One shared serial number across every example in this repo, deliberately: macOS
-            // builds the device node from it, so `/dev/cu.usbmodemEPD*` is the same command
-            // whatever is flashed and there is no per-example lookup table to remember. Which
-            // firmware is running is carried by the product string above instead, readable with
-            //   ioreg -r -c IOUSBHostDevice -l | grep -o '"USB Product Name" = "Feather[^"]*"'
-            // and stated again in the first decoded log line.
-            .serial_number("EPD")])
-        .unwrap()
-        .device_class(2) // CDC
-        .build();
-
-    let mut reported = false;
-
-    loop {
-        watchdog.feed();
-
-        // Must be called as often as possible to keep the USB device alive.
-        if usb_dev.poll(&mut [&mut serial]) {
-            let mut rx = [0u8; 64];
-            let _ = serial.read(&mut rx);
-        }
-
-        // Log once, and only after the host has configured the device — anything emitted before
-        // that is dropped by the drain below rather than buffered.
-        if !reported && usb_dev.state() == UsbDeviceState::Configured {
-            defmt::info!("=== SSD1680 partial-refresh bisect (Feather RP2040 ThinkInk) ===");
-            defmt::info!(
-                "  A: {} ms  (RP2350 3894, healthy C3 ~3891, degraded C3 7450)",
-                a_ms
-            );
-            defmt::info!(
-                "  B: {} ms  (RP2350 1018, healthy C3 ~1017, degraded C3 98)",
-                b_ms
-            );
-            defmt::info!(
-                "  C: {} ms  (RP2350 1018, healthy C3 ~1017, degraded C3 333)",
-                c_ms
-            );
-            defmt::info!("=== done ===");
-            reported = true;
-        }
-
-        // Drain binary defmt-bbq frames to the USB serial port.
-        while let Ok(grant) = bbq.read() {
-            if usb_dev.state() == UsbDeviceState::Configured {
-                if let Ok(written) = serial.write(&grant) {
-                    grant.release(written);
-                } else {
-                    break;
-                }
-            } else {
-                // Not configured: release rather than let the buffer fill.
-                let len = grant.len();
-                grant.release(len);
-            }
-        }
-    }
+        &mut watchdog,
+        bbq,
+    )
 }

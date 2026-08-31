@@ -61,6 +61,26 @@
 //!
 //! **Swap panels with the board unpowered.**
 //!
+//! ## Measured output
+//!
+//! ```text
+//! === GDEM0213B74 2.13" Mono (epdsi SSD1680, Feather RP2040) ===
+//!   Phase 1 Full: 3893 ms
+//!   Phase 2 partial: 1017 ms   (x6)
+//!   Phase 3 cleanup: 3893 ms
+//! === done ===
+//! ```
+//!
+//! | Stage | This board | RP2350 | XIAO ESP32-C3 |
+//! | :--- | ---: | ---: | ---: |
+//! | Full | 3893 ms | 3894 ms | ~3891 ms |
+//! | Differential partial | 1017 ms | 1018 ms | ~1017 ms |
+//! | Cleanup (full waveform) | 3893 ms | — | — |
+//!
+//! Within a millisecond of RP2350 on every stage, from identical driver code on a different MCU
+//! family. The six partials at 1017 ms are genuinely differential — this is the one panel here
+//! where the SSD1680 fast LUT does what it claims.
+//!
 //! ## Run
 //!
 //! Hold BOOT, press RESET, release BOOT so the `RPI-RP2` volume appears, then:
@@ -73,7 +93,7 @@
 //! end" above. Only after that does the serial device enumerate. This waits for it and decodes:
 //!
 //! ```bash
-//! for _ in $(seq 60); do ls /dev/cu.usbmodemEPD* >/dev/null 2>&1 && break; sleep 1; done
+//! until ls /dev | grep -q "^cu\.usbmodemEPD"; do sleep 1; done
 //! cat /dev/cu.usbmodemEPD* | defmt-print -e target/thumbv6m-none-eabi/release/examples/ssd1680_gdem0213b74_epd
 //! ```
 //!
@@ -98,7 +118,6 @@ use adafruit_feather_rp2040 as bsp;
 use bsp::hal::clocks::init_clocks_and_plls;
 use bsp::hal::fugit::RateExtU32;
 use bsp::hal::gpio::{FunctionSpi, Pins};
-use bsp::hal::usb::UsbBus;
 use bsp::hal::{spi, Clock, Sio, Timer, Watchdog};
 use bsp::{entry, pac, XOSC_CRYSTAL_FREQ};
 
@@ -106,9 +125,7 @@ use bsp::{entry, pac, XOSC_CRYSTAL_FREQ};
 use defmt_bbq as _;
 use panic_probe as _;
 
-use usb_device::class_prelude::*;
-use usb_device::prelude::*;
-use usbd_serial::SerialPort;
+use adafruit_feather_thinkink_discovery::usb_report::{report_and_park, Report, UsbParts};
 
 use embedded_graphics::geometry::{Point, Size};
 use embedded_graphics::mono_font::ascii::{FONT_10X20, FONT_6X10};
@@ -202,7 +219,8 @@ where
 
 #[entry]
 fn main() -> ! {
-    let mut bbq = defmt_bbq::init().unwrap();
+    let bbq = defmt_bbq::init().unwrap();
+    let mut report = Report::new();
 
     let mut pac = pac::Peripherals::take().unwrap();
     let mut watchdog = Watchdog::new(pac.WATCHDOG);
@@ -269,9 +287,6 @@ fn main() -> ! {
     // The panel is only 122 px wide, so the footer labels use the smaller 6x10 font.
     let small_text_style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
 
-    // Timings: [0] Phase 1 full, [1..=6] Phase 2 differential passes, [7] Phase 3 cleanup.
-    let mut ms = [0u64; 8];
-
     // --- Phase 1: Full monochrome refresh. ---
     // Scoped so the full-frame borrow of `bw_buf` ends before Phase 2 re-borrows it.
     {
@@ -322,7 +337,7 @@ fn main() -> ! {
         epd.write_frame(ColorChannel::BlackWhite, display.as_slice())
             .unwrap();
 
-        ms[0] = timed_refresh(&mut epd, &mut timer);
+        report.record("Phase 1 Full", timed_refresh(&mut epd, &mut timer));
 
         // Seed the "previous image" RAM (0x26) with what is now physically on the panel, so the
         // Phase 2 differential updates have a correct base to diff against.
@@ -395,7 +410,7 @@ fn main() -> ! {
         epd.write_frame(ColorChannel::BlackWhite, &bw_buf[..BAND_BYTES])
             .unwrap();
 
-        ms[count as usize] = timed_refresh(&mut epd, &mut timer);
+        report.record("Phase 2 partial", timed_refresh(&mut epd, &mut timer));
 
         // Copy the band just displayed into the "previous image" RAM so the next iteration diffs
         // against what is actually on the panel rather than the Phase 1 content.
@@ -429,79 +444,26 @@ fn main() -> ! {
     epd.write_frame(ColorChannel::BlackWhite, &bw_buf[..BAND_BYTES])
         .unwrap();
 
-    ms[7] = timed_refresh(&mut epd, &mut timer);
+    report.record("Phase 3 cleanup", timed_refresh(&mut epd, &mut timer));
 
     // Restore the full-frame RAM window for any subsequent updates.
     epd.set_window(0, 0, GDEM0213B74::WIDTH - 1, GDEM0213B74::HEIGHT - 1)
         .unwrap();
     epd.set_cursor(0, 0).unwrap();
 
-    // ---------------------------------------------------------------------------------------
-    // Panel work is done. Bring USB up and report.
-    // ---------------------------------------------------------------------------------------
-
-    let usb_bus = UsbBusAllocator::new(UsbBus::new(
-        pac.USBCTRL_REGS,
-        pac.USBCTRL_DPRAM,
-        clocks.usb_clock,
-        true,
+    // Panel work is done. Hand the timings to the shared reporter, which brings USB up and
+    // parks; see `usb_report` in this crate for why nothing can be logged before this point.
+    report_and_park(
+        "GDEM0213B74 2.13\" Mono (epdsi SSD1680, Feather RP2040)",
+        "Feather RP2040 GDEM0213B74",
+        &report,
+        UsbParts {
+            regs: pac.USBCTRL_REGS,
+            dpram: pac.USBCTRL_DPRAM,
+            clock: clocks.usb_clock,
+        },
         &mut pac.RESETS,
-    ));
-
-    let mut serial = SerialPort::new(&usb_bus);
-    let mut usb_dev = UsbDeviceBuilder::new(&usb_bus, UsbVidPid(0x16c0, 0x27dd))
-        .strings(&[StringDescriptors::default()
-            .manufacturer("Adafruit")
-            .product("Feather RP2040 GDEM0213B74")
-            // One shared serial number across every example in this repo, deliberately: macOS
-            // builds the device node from it, so `/dev/cu.usbmodemEPD*` is the same command
-            // whatever is flashed and there is no per-example lookup table to remember. Which
-            // firmware is running is carried by the product string above instead, readable with
-            //   ioreg -r -c IOUSBHostDevice -l | grep -o '"USB Product Name" = "Feather[^"]*"'
-            // and stated again in the first decoded log line.
-            .serial_number("EPD")])
-        .unwrap()
-        .device_class(2) // CDC
-        .build();
-
-    let mut reported = false;
-
-    loop {
-        watchdog.feed();
-
-        if usb_dev.poll(&mut [&mut serial]) {
-            let mut rx = [0u8; 64];
-            let _ = serial.read(&mut rx);
-        }
-
-        if !reported && usb_dev.state() == UsbDeviceState::Configured {
-            defmt::info!("=== GDEM0213B74 2.13\" Mono (epdsi SSD1680, Feather RP2040) ===");
-            defmt::info!("  Phase 1 Full:      {} ms  (RP2350 3894, C3 ~3891)", ms[0]);
-            defmt::info!(
-                "  Phase 2 partial:   {} {} {} {} {} {} ms  (RP2350 1018, C3 ~1017)",
-                ms[1],
-                ms[2],
-                ms[3],
-                ms[4],
-                ms[5],
-                ms[6]
-            );
-            defmt::info!("  Phase 3 cleanup:   {} ms  (full waveform)", ms[7]);
-            defmt::info!("=== done ===");
-            reported = true;
-        }
-
-        while let Ok(grant) = bbq.read() {
-            if usb_dev.state() == UsbDeviceState::Configured {
-                if let Ok(written) = serial.write(&grant) {
-                    grant.release(written);
-                } else {
-                    break;
-                }
-            } else {
-                let len = grant.len();
-                grant.release(len);
-            }
-        }
-    }
+        &mut watchdog,
+        bbq,
+    )
 }

@@ -18,6 +18,15 @@ mipidsi = "0.8.0"
 display-interface = "0.5.0"
 display-interface-spi = "0.5.0"
 
+# Used by the `usb_report` module, which the e-paper examples rely on for logging.
+# Regular dependencies rather than dev-dependencies because that module lives in the
+# library: this board has no SWD connector fitted, so USB CDC is the only way to get
+# defmt output off it without soldering.
+usb-device = "0.3.1"
+usbd-serial = "0.2.2"
+defmt-bbq = "0.1.0"
+bbqueue = { version = "0.5.1", features = ["thumbv6"] }
+
 [dev-dependencies]
 smart-leds = "0.3.0"
 ws2812-pio = "0.8.0"
@@ -27,12 +36,8 @@ tinybmp = "0.6.0"
 bme280 = "0.5.1"
 ssd1306 = "0.9.0"
 heapless = "0.8.0"
-usb-device = "0.3.1"
-usbd-serial = "0.2.2"
 log = "0.4.20"
 critical-section = "1.1.2"
-defmt-bbq = "0.1.0"
-bbqueue = { version = "0.5.1", features = ["thumbv6"] }
 embedded-hal-bus = "0.3.0"
 epdsi = "0.1.5"
 sh1107-driver = { version = "0.1.0", features = ["graphics"] }

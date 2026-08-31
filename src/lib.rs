@@ -1,5 +1,8 @@
-//! Shared driver code for JD79661 e-paper displays.
+//! Shared driver code for JD79661 e-paper displays, plus USB-serial log reporting for the
+//! e-paper examples.
 #![no_std]
+
+pub mod usb_report;
 
 use embedded_graphics::prelude::*;
 use embedded_hal::delay::DelayNs;

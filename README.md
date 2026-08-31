@@ -21,7 +21,9 @@ cargo generate --git https://github.com/rp-rs/rp2040-project-template
 ## Hardware Supported
 
 - **Board**: [Adafruit RP2040 Feather ThinkInk](https://www.adafruit.com/product/5727)
-- **Displays**: Both displays connect via the onboard modular 24-pin FPC connector:
+- **Displays**: Seven panels across five controller ICs have been driven from the onboard modular
+  24-pin FPC connector, all verified on hardware — see [the panel examples](#16-22-e-paper-panels-via-epdsi).
+  Two are also driven by the standalone drivers in this repo:
   - 1.54" Tri-Color (Red/Black/White) e-Paper display ([GDEM0154Z90](https://www.good-display.com/product/436.html)). Controller: **SSD1681**.
   - 2.13" Quad-Color (Red/Yellow/Black/White) e-Paper display ([Product 6373](https://www.adafruit.com/product/6373)). Controller: **JD79661**.
 - **NeoPixel**: Onboard WS2812 (Power: GP20, Data: GP21).
@@ -182,32 +184,60 @@ Displays text and geometric shapes on a 240x240 round LCD.
 cargo run --example gc9a01_spi_text
 ```
 
-### 16. SSD1680 2.13" Monochrome (`examples/ssd1680_gdem0213b74_epd.rs`)
+### 16-22. e-Paper panels via `epdsi`
 
-`GDEM0213B74` (122x250, Adafruit 6383) driven through the [`epdsi`](https://crates.io/crates/epdsi)
-framework. Full refresh, then six genuinely differential partial updates with the logos swapping
-each pass, then a full-waveform cleanup. Port of the Raspberry Pi Pico 2 example, with everything
-above `main` unchanged.
+![Seven e-paper panels driven by epdsi on one Feather RP2040 ThinkInk: GDEM0154Z90, GDEM0213B74, ZJY122250, GDEY0266Z90, SE0352N14, GDEY037T03, GDEQ0426T82](thinkink_epdsi.jpg)
+
+*All seven driven by the same board through [`epdsi`](https://crates.io/crates/epdsi) — left to
+right: `GDEM0154Z90` (SSD1681, 1.54" tri-color), `GDEM0213B74` (SSD1680, 2.13" mono), `ZJY122250`
+(JD79661, 2.13" quad-color), `GDEY0266Z90` (SSD1680, 2.66" tri-color), `SE0352N14` (UC8253, 3.52"
+tri-color), `GDEY037T03` (UC8253, 3.7" mono) and `GDEQ0426T82` (SSD1677, 4.26" mono). Seven panels,
+five controller ICs, one 24-pin socket and no wiring — changing panel is a swap and a reflash.*
+
+
+Seven panels driven through the [`epdsi`](https://crates.io/crates/epdsi) framework, all ported
+from [`rust-rpico2-discovery`](https://github.com/melastmohican/rust-rpico2-discovery) with
+everything above `main()` unchanged — only board bring-up, the BUSY pull and the reporting differ.
+**All use the same 24-pin FPC socket, so testing another panel is a swap and nothing else.** Swap
+with the board unpowered.
+
+| # | Example | Panel | Controller |
+| :-- | :--- | :--- | :--- |
+| 16 | `ssd1681_gdem0154z90_epd` | 1.54" Tri-Color, 200x200 | SSD1681 |
+| 17 | `ssd1680_gdem0213b74_epd` | 2.13" Mono, 122x250 | SSD1680 |
+| 18 | `jd79661_zjy122250_epd` | 2.13" Quad-Color, 122x250 | JD79661 |
+| 19 | `ssd1680_gdey0266z90_epd` | 2.66" Tri-Color, 152x296 | SSD1680 |
+| 20 | `uc8253_se0352n14_epd` | 3.52" Tri-Color, 240x360 | UC8253 |
+| 21 | `uc8253_gdey037t03_epd` | 3.7" Mono, 240x416 | UC8253 |
+| 22 | `ssd1677_gdeq0426t82_epd` | 4.26" Mono, 800x480 | SSD1677 |
 
 ```bash
-cargo run --release --example ssd1680_gdem0213b74_epd
+cargo run --release --example ssd1681_gdem0154z90_epd   # and so on
 ```
 
-### 17. SSD1680 2.66" Tri-Color (`examples/ssd1680_gdey0266z90_epd.rs`)
+**All seven are verified on hardware on this board**, each on the first attempt. Measured:
 
-`GDEY0266Z90` (152x296 Black/White/Red, sold by Waveshare as the 2.66" e-Paper Module (B)).
-Exercises all four SSD1680 refresh modes — `Full`, windowed `Full`, `FastFull` and
-`BaseMap`/`Partial` — and times each, so the cost of every mode on colour glass is measurable
-rather than assumed. Takes about two minutes.
+| Panel | Full refresh | Partial / fast |
+| :--- | ---: | ---: |
+| 1.54" Tri-Color (SSD1681) | 17881 ms | 17881 ms (windowed — no saving) |
+| 2.13" Mono (SSD1680) | 3893 ms | 1017 ms (differential) |
+| 2.13" Quad-Color (JD79661) | 20041 ms | — |
+| 2.66" Tri-Color (SSD1680) | 20044 ms | 16176 ms (`FastFull`) |
+| 3.52" Tri-Color (UC8253) | 17366 ms | — |
+| 3.7" Mono (UC8253) | 2615 ms | 410 ms (`FastPartial`) |
+| 4.26" Mono (SSD1677) | 3744 ms | 500 ms |
 
-The Arduino sketches this panel was first brought up with were written for **this** board, so it is
-the one place GxEPD2 and `epdsi` can be compared on identical hardware.
+Two results worth drawing out. The **colour panels have no fast path** — the 1.54" windowed refresh
+costs exactly what a full one does, because narrowing the RAM window reduces what is redrawn, not
+what it costs. And the **two UC8253 panels both work here**, though
+`xiao-esp32c3-blinky/BRINGUP.md` records them as not working at all; that module was later found
+faulty, and these runs are evidence the driver was never the problem.
 
-```bash
-cargo run --release --example ssd1680_gdey0266z90_epd
-```
+Each example's docs carry its measured output and, where one exists, the RP2350 figure beside it.
+Two references disagree with this board — the 1.54"'s ~14 s and the 4.26"'s ~1000 ms partial — and
+both are flagged as unresolved in the relevant example rather than quietly corrected.
 
-### 18. SSD1680 Partial-Refresh Bisect (`examples/epd_diag_partial.rs`)
+### 23. SSD1680 Partial-Refresh Bisect (`examples/epd_diag_partial.rs`)
 
 Diagnostic rather than demo, for the 2.13" panel. Times three cases — full frame on `Full`, full
 frame on `Partial`, and a banded window on `Partial` — so a partial-refresh fault can be narrowed
@@ -219,7 +249,7 @@ is what identified a failing XIAO ESP32-C3.
 cargo run --release --example epd_diag_partial
 ```
 
-> Examples 16-18 report over USB serial and print nothing until the panel work finishes — see
+> Examples 16-23 report over USB serial and print nothing until the panel work finishes — see
 > [Logging without a probe](#logging-without-a-probe).
 
 ## Flashing and logging
@@ -283,7 +313,7 @@ SWCLK / GND / SWDIO; the probe does not power the target, so both stay on their 
 ### Logging without a probe
 
 `defmt` output normally goes over RTT, which needs route 3. Without a probe, use `defmt-bbq` over
-USB CDC instead — see `usb_serial_defmt.rs` and the three e-paper examples.
+USB CDC instead — see `usb_serial_defmt.rs` and the eight e-paper examples.
 
 USB CDC needs `usb_dev.poll()` every few milliseconds, and an e-paper refresh blocks for seconds
 at a time. So the e-paper examples **run the panel silently and only bring USB up at the end**.
@@ -291,19 +321,30 @@ That means the serial device does not exist while the panel is working:
 
 | Example | Panel work before USB appears |
 | :--- | ---: |
+| `uc8253_gdey037t03_epd` | ~15 s |
 | `epd_diag_partial` | ~15 s |
 | `ssd1680_gdem0213b74_epd` | ~20 s |
+| `ssd1677_gdeq0426t82_epd` | ~20 s |
+| `jd79661_zjy122250_epd` | ~25 s |
+| `uc8253_se0352n14_epd` | ~40 s |
 | `ssd1680_gdey0266z90_epd` | ~2 min |
+| `ssd1681_gdem0154z90_epd` | ~2 min |
 
 > **`zsh: no matches found: /dev/cu.usbmodem*` means the device has not enumerated yet**, not that
 > anything failed. The catch is that **`cargo run` returns as soon as flashing completes** — your
 > prompt comes back and it looks finished, but the board is only just starting its panel work with
 > USB down. Pasting the `cat` command straight after is guaranteed to be too early.
+>
+> Note the wait loop below is deliberately glob-free. In zsh an unmatched glob is a hard error
+> raised by the shell *before* the command runs, so `ls /dev/cu.usbmodemEPD* 2>/dev/null` prints
+> `no matches found` on every iteration and never executes `ls` — the redirect cannot suppress a
+> message the shell itself emits, and the `&& break` never fires. Listing `/dev` and grepping
+> avoids expansion entirely and works the same in bash and zsh.
 
 So wait for it rather than guessing. Only the ELF path changes between examples:
 
 ```bash
-for _ in $(seq 180); do ls /dev/cu.usbmodemEPD* >/dev/null 2>&1 && break; sleep 1; done
+until ls /dev | grep -q "^cu\.usbmodemEPD"; do sleep 1; done
 cat /dev/cu.usbmodemEPD* | defmt-print -e target/thumbv6m-none-eabi/release/examples/<name>
 ```
 
