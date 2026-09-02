@@ -7,9 +7,11 @@
 //! `Ssd1677Controller` from the `epdsi` library.
 //!
 //! Demonstrates:
-//! 0. **Phase 0**: Refreshes a cleared frame on its own, so the RAM auto-fill path added in
-//!    epdsi 0.1.7 is checked on glass. Expect a uniform white panel; banding or a half-inverted
-//!    plane means the `0x46`/`0x47` step encoding is wrong for this panel.
+//! 0. **Phase 0**: Clears to black, refreshes, then clears to white and refreshes, so the RAM
+//!    auto-fill path added in epdsi 0.1.7 is checked on glass in both polarities. The black pass
+//!    matters: a white clear on an already-white panel cannot be told apart from a no-op. Expect
+//!    two uniform panels; banding or a half-inverted plane means the `0x46`/`0x47` step encoding
+//!    is wrong.
 //! 1. **Phase 1**: Full monochrome refresh displaying a header bar, 4x-scaled Ferris and Rust
 //!    logos stacked vertically, and text labels.
 //! 2. **Phase 2**: Fast *differential* refresh loop that swaps the Ferris and Rust logos on every
@@ -79,7 +81,8 @@
 //!
 //! ```text
 //! === GDEQ0426T82 4.26" Mono (epdsi SSD1677, Feather RP2040) ===
-//!   Phase 0 Clear: 3745 ms
+//!   Phase 0 Black: 3745 ms
+//!   Phase 0 White: 3744 ms
 //!   Phase 1 Full: 3744 ms
 //!   Phase 2 Partial: 500 ms   (x6)
 //!   Phase 3 cleanup Full: 3745 ms
@@ -385,23 +388,36 @@ fn main() -> ! {
     epd.set_cursor(0, 0).unwrap();
     epd.clear_frame(ColorChannel::RedYellow, 0xFF).unwrap();
 
-    // --- Phase 0: show the cleared frame ------------------------------------------------
-    //
-    // Refresh here rather than drawing straight over the cleared RAM, so the clear is visible on
-    // glass instead of being inferred from what comes after it.
+    // --- Phase 0: prove the RAM auto-fill actually ran ----------------------------------
     //
     // Since epdsi 0.1.7 a uniform full-plane clear is painted by the controller's own RAM
     // pattern generator (`0x46`/`0x47`) rather than streamed byte by byte. That register is a
-    // *regular pattern* generator: if its step encoding were wrong, the plane would come out
-    // banded or half-inverted rather than raising an error, and every later phase would happily
-    // draw on top of the damage. No vendor reference driver uses these registers, so this screen
-    // is the verification.
+    // *regular pattern* generator, so a wrong step encoding renders as a banded or half-inverted
+    // plane rather than raising an error. No vendor reference driver uses it, which makes this
+    // the verification.
     //
-    // Expect: a completely uniform white panel, no bands, no split down the middle, no darker
-    // half. Anything else means the fast path is wrong on this panel — rebuild with
-    // `Ssd1677Controller::new(..).with_ram_auto_fill(false)` to fall back to the byte stream and
-    // confirm the panel itself is fine.
-    report.record("Phase 0 Clear", timed_refresh(&mut epd, &mut timer));
+    // Clear to **black** first, not white. A white clear on a panel that is already white is
+    // indistinguishable from a no-op: if the sweep silently did nothing, the panel would still
+    // look perfect. Going to black proves something reached the glass, exercises the `A[7] = 0`
+    // first-step-value encoding, and makes banding far easier to see than it is against white.
+    // The white pass afterwards then exercises `A[7] = 1`.
+    //
+    // Expect: a completely uniform black panel, then a completely uniform white one. No bands,
+    // no split down the middle, no lighter or darker half. Anything else means the fast path is
+    // wrong on this panel — rebuild with `.with_ram_auto_fill(false)` to fall back to the byte
+    // stream and confirm the panel itself is fine.
+    epd.set_window(0, 0, GDEQ0426T82::WIDTH - 1, GDEQ0426T82::HEIGHT - 1)
+        .unwrap();
+    epd.set_cursor(0, 0).unwrap();
+    epd.clear_frame(ColorChannel::BlackWhite, 0x00).unwrap();
+    report.record("Phase 0 Black", timed_refresh(&mut epd, &mut timer));
+    timer.delay_ms(4000);
+
+    epd.set_window(0, 0, GDEQ0426T82::WIDTH - 1, GDEQ0426T82::HEIGHT - 1)
+        .unwrap();
+    epd.set_cursor(0, 0).unwrap();
+    epd.clear_frame(ColorChannel::BlackWhite, 0xFF).unwrap();
+    report.record("Phase 0 White", timed_refresh(&mut epd, &mut timer));
 
     // Frame buffer: 800 x 480 / 8 = 48,000 bytes (0xFF = white)
     let mut bw_buf = [0xFFu8; FRAME_BYTES];
