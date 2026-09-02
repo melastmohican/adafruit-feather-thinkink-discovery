@@ -7,6 +7,9 @@
 //! `Ssd1677Controller` from the `epdsi` library.
 //!
 //! Demonstrates:
+//! 0. **Phase 0**: Refreshes a cleared frame on its own, so the RAM auto-fill path added in
+//!    epdsi 0.1.7 is checked on glass. Expect a uniform white panel; banding or a half-inverted
+//!    plane means the `0x46`/`0x47` step encoding is wrong for this panel.
 //! 1. **Phase 1**: Full monochrome refresh displaying a header bar, 4x-scaled Ferris and Rust
 //!    logos stacked vertically, and text labels.
 //! 2. **Phase 2**: Fast *differential* refresh loop that swaps the Ferris and Rust logos on every
@@ -76,6 +79,7 @@
 //!
 //! ```text
 //! === GDEQ0426T82 4.26" Mono (epdsi SSD1677, Feather RP2040) ===
+//!   Phase 0 Clear: 3745 ms
 //!   Phase 1 Full: 3744 ms
 //!   Phase 2 Partial: 500 ms   (x6)
 //!   Phase 3 cleanup Full: 3745 ms
@@ -369,8 +373,8 @@ fn main() -> ! {
 
     // Clear both display controller RAM banks to white. On this monochrome panel the secondary
     // RAM (0x26) is not a color plane but the "previous image" used by differential updates.
-    // Each RAM write starts from the window origin and leaves the address counter wherever it
-    // stopped, so re-assert window + cursor before each bank.
+    // Re-assert window + cursor before each bank: `write_frame` starts from the window origin,
+    // and the window is what a clear paints.
     epd.set_window(0, 0, GDEQ0426T82::WIDTH - 1, GDEQ0426T82::HEIGHT - 1)
         .unwrap();
     epd.set_cursor(0, 0).unwrap();
@@ -380,6 +384,24 @@ fn main() -> ! {
         .unwrap();
     epd.set_cursor(0, 0).unwrap();
     epd.clear_frame(ColorChannel::RedYellow, 0xFF).unwrap();
+
+    // --- Phase 0: show the cleared frame ------------------------------------------------
+    //
+    // Refresh here rather than drawing straight over the cleared RAM, so the clear is visible on
+    // glass instead of being inferred from what comes after it.
+    //
+    // Since epdsi 0.1.7 a uniform full-plane clear is painted by the controller's own RAM
+    // pattern generator (`0x46`/`0x47`) rather than streamed byte by byte. That register is a
+    // *regular pattern* generator: if its step encoding were wrong, the plane would come out
+    // banded or half-inverted rather than raising an error, and every later phase would happily
+    // draw on top of the damage. No vendor reference driver uses these registers, so this screen
+    // is the verification.
+    //
+    // Expect: a completely uniform white panel, no bands, no split down the middle, no darker
+    // half. Anything else means the fast path is wrong on this panel — rebuild with
+    // `Ssd1677Controller::new(..).with_ram_auto_fill(false)` to fall back to the byte stream and
+    // confirm the panel itself is fine.
+    report.record("Phase 0 Clear", timed_refresh(&mut epd, &mut timer));
 
     // Frame buffer: 800 x 480 / 8 = 48,000 bytes (0xFF = white)
     let mut bw_buf = [0xFFu8; FRAME_BYTES];

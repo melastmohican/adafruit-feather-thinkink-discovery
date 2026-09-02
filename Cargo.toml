@@ -39,7 +39,7 @@ heapless = "0.8.0"
 log = "0.4.20"
 critical-section = "1.1.2"
 embedded-hal-bus = "0.3.0"
-epdsi = "0.1.5"
+epdsi = "0.1.6"
 sh1107-driver = { version = "0.1.0", features = ["graphics"] }
 
 # If you're not going to use a Board Support Package you'll need these:
@@ -97,3 +97,9 @@ debug-assertions = false
 incremental = false
 lto = 'fat'
 opt-level = 3
+
+# TEMPORARY, for the SSD1677 RAM auto-fill hardware gate only. The published 0.1.6 still streams
+# every RAM byte on a clear; the 0x46/0x47 pattern-generator path is committed to epdsi main but
+# unreleased. Remove this and bump the dep above once epdsi 0.1.7 is out.
+[patch.crates-io]
+epdsi = { path = "../epdsi" }
