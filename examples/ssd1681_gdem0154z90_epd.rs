@@ -39,12 +39,14 @@
 //!
 //! These are SPI0 on the RP2040, even though the Arduino core calls the port SPI1.
 //!
-//! ## Results arrive at the end, not live
+//! ## Results arrive live, one phase at a time
 //!
 //! No SWD connector is fitted on this board, so logging goes over USB CDC via `defmt-bbq` rather
 //! than RTT. USB needs polling every few milliseconds and `epd.refresh()` blocks for seconds, so
-//! the panel runs silently and every timing is reported once it finishes — see
-//! [`usb_report`](adafruit_feather_thinkink_discovery::usb_report).
+//! USB is serviced on core1 while core0 runs the panel — see
+//! [`usb_report`](adafruit_feather_thinkink_discovery::usb_report). Each phase's timing is logged
+//! as soon as it completes, arriving on the host at essentially the same moment the panel finishes
+//! visibly changing for that phase.
 //!
 //! **Watch the panel meanwhile.** A stage that completes fast *without* visibly changing the
 //! display has not driven the ink, and no timing figure will tell you that.
@@ -53,12 +55,12 @@
 //!
 //! ```text
 //! === GDEM0154Z90 1.54" Tri-Color (epdsi SSD1681, Feather RP2040) ===
-//!   Phase 1 Full tri-color: 17881 ms
-//!   Phase 2 windowed Full: 17881 ms
-//!   Phase 2 windowed Full: 17882 ms
-//!   Phase 2 windowed Full: 17881 ms
-//!   Phase 2 windowed Full: 17880 ms
-//!   Phase 2 windowed Full: 17881 ms
+//! Phase 1 Full tri-color: 17881 ms
+//! Phase 2 windowed Full: 17881 ms
+//! Phase 2 windowed Full: 17882 ms
+//! Phase 2 windowed Full: 17881 ms
+//! Phase 2 windowed Full: 17880 ms
+//! Phase 2 windowed Full: 17881 ms
 //! === done ===
 //! ```
 //!
@@ -76,11 +78,18 @@
 //!
 //! ## Run
 //!
+//! **Put the board in bootloader mode first**: hold **BOOT**, press and release **RESET**, then
+//! release **BOOT** — the `RPI-RP2` USB mass-storage volume has to be mounted before `cargo run`
+//! can flash it.
+//!
 //! ```bash
 //! cargo run --release --example ssd1681_gdem0154z90_epd
 //! until ls /dev | grep -q "^cu\.usbmodemEPD"; do sleep 1; done
 //! cat /dev/cu.usbmodemEPD* | defmt-print -e target/thumbv6m-none-eabi/release/examples/ssd1681_gdem0154z90_epd
 //! ```
+//!
+//! USB comes up within about a second of boot now — core1 services it independently of the panel,
+//! so the `until` loop above returns almost immediately instead of waiting for the run to finish.
 //!
 //! The `until` loop is glob-free deliberately. In zsh an unmatched glob is a hard error raised by
 //! the shell *before* the command runs, so `ls /dev/cu.usbmodemEPD* 2>/dev/null` still prints
@@ -88,14 +97,15 @@
 //! itself emits. Listing `/dev` and grepping avoids expansion entirely and behaves the same in
 //! bash and zsh.
 //!
-//! Seeing `no matches found` from a bare `cat` just means the panel is still running: `cargo run`
-//! returns after flashing, not after the run. Ctrl-C the `cat` once the output has printed.
+//! **`zsh: no matches found: /dev/cu.usbmodem*` right after flashing just means enumeration hasn't
+//! finished yet** — it should clear within a second or two. If it doesn't clear quickly, confirm
+//! the board was actually in bootloader mode before flashing.
 
 #![no_std]
 #![no_main]
 
 use adafruit_feather_rp2040 as bsp;
-use adafruit_feather_thinkink_discovery::usb_report::{report_and_park, Report, UsbParts};
+use adafruit_feather_thinkink_discovery::usb_report::{spawn_usb_log_pump, Core1Handles, UsbParts};
 use bsp::hal::clocks::init_clocks_and_plls;
 use bsp::hal::fugit::RateExtU32;
 use bsp::hal::gpio::{FunctionSpi, Pins};
@@ -118,8 +128,7 @@ use embedded_hal_bus::spi::ExclusiveDevice;
 use epdsi::prelude::*;
 use tinybmp::Bmp;
 
-/// Refreshes the panel and returns the elapsed milliseconds. Nothing is logged during the run:
-/// USB is not up yet, and `defmt-bbq` discards buffered data while the device is unconfigured.
+/// Refreshes the panel and returns the elapsed milliseconds.
 fn timed_refresh<BUS, C, P>(epd: &mut EpdDriver<BUS, C, P>, timer: &mut Timer) -> u64
 where
     C: EpdController<BUS>,
@@ -134,11 +143,10 @@ where
 #[entry]
 fn main() -> ! {
     let bbq = defmt_bbq::init().unwrap();
-    let mut report = Report::new();
 
     let mut pac = pac::Peripherals::take().unwrap();
     let mut watchdog = Watchdog::new(pac.WATCHDOG);
-    let sio = Sio::new(pac.SIO);
+    let mut sio = Sio::new(pac.SIO);
 
     let clocks = init_clocks_and_plls(
         XOSC_CRYSTAL_FREQ,
@@ -176,6 +184,27 @@ fn main() -> ! {
         clocks.peripheral_clock.freq(),
         4_000_000u32.Hz(),
         embedded_hal::spi::MODE_0,
+    );
+
+    // `pac.RESETS` is free of further borrows past this point, so hand USB servicing to core1: it
+    // polls independently of whatever core0 does next, so `epd.refresh()` can block for as long as
+    // it needs to without starving the USB device.
+    spawn_usb_log_pump(
+        Core1Handles {
+            psm: &mut pac.PSM,
+            ppb: &mut pac.PPB,
+            fifo: &mut sio.fifo,
+        },
+        "GDEM0154Z90 1.54\" Tri-Color (epdsi SSD1681, Feather RP2040)",
+        "Feather RP2040 GDEM0154Z90",
+        UsbParts {
+            regs: pac.USBCTRL_REGS,
+            dpram: pac.USBCTRL_DPRAM,
+            clock: clocks.usb_clock,
+        },
+        pac.RESETS,
+        watchdog,
+        bbq,
     );
 
     // `SpiBusWrapper` expects the `SpiDevice` to own CS, unlike the hand-rolled `jd79661` example.
@@ -301,10 +330,8 @@ fn main() -> ! {
         epd.write_frame(ColorChannel::RedYellow, display_red.as_slice())
             .unwrap();
 
-        report.record(
-            "Phase 1 Full tri-color",
-            timed_refresh(&mut epd, &mut timer),
-        );
+        let ms = timed_refresh(&mut epd, &mut timer);
+        defmt::info!("Phase 1 Full tri-color: {} ms", ms);
     }
 
     timer.delay_ms(2000);
@@ -376,7 +403,8 @@ fn main() -> ! {
         epd.write_frame(ColorChannel::RedYellow, band_red.as_slice())
             .unwrap();
 
-        report.record("Phase 2 windowed Full", timed_refresh(&mut epd, &mut timer));
+        let ms = timed_refresh(&mut epd, &mut timer);
+        defmt::info!("Phase 2 windowed Full: {} ms", ms);
 
         timer.delay_ms(1000);
     }
@@ -386,17 +414,10 @@ fn main() -> ! {
         .unwrap();
     epd.set_cursor(0, 0).unwrap();
 
-    report_and_park(
-        "GDEM0154Z90 1.54\" Tri-Color (epdsi SSD1681, Feather RP2040)",
-        "Feather RP2040 GDEM0154Z90",
-        &report,
-        UsbParts {
-            regs: pac.USBCTRL_REGS,
-            dpram: pac.USBCTRL_DPRAM,
-            clock: clocks.usb_clock,
-        },
-        &mut pac.RESETS,
-        &mut watchdog,
-        bbq,
-    )
+    defmt::info!("=== done ===");
+
+    // Core1 keeps servicing USB and draining defmt-bbq indefinitely; core0's work is done.
+    loop {
+        cortex_m::asm::wfi();
+    }
 }

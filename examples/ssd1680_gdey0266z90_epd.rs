@@ -23,12 +23,13 @@
 //! panel, and any difference is unambiguously a driver difference rather than a host or carrier
 //! one. It also has no carrier board and no jumper wiring: the 24-pin FPC socket is on the PCB.
 //!
-//! ## Results arrive at the end, not live
+//! ## Results arrive live, one phase at a time
 //!
 //! There is no debug probe on this board, so logging goes over USB CDC via `defmt-bbq` rather than
 //! RTT. USB CDC needs `usb_dev.poll()` every few milliseconds and `epd.refresh()` blocks for ~20 s
-//! at a time, so the phases run silently into an array of timings and USB comes up afterwards to
-//! report. The serial device appears roughly two minutes after boot with everything in it.
+//! at a time, so USB is serviced on core1 while core0 runs the phases — see
+//! [`usb_report`](adafruit_feather_thinkink_discovery::usb_report). Each phase's timing is logged
+//! as soon as it completes.
 //!
 //! **Watch the panel meanwhile** — it is the better instrument. A stage that finishes fast without
 //! visibly changing the image has not driven the ink.
@@ -80,13 +81,13 @@
 //!
 //! ```text
 //! === GDEY0266Z90 2.66" Tri-Color (epdsi SSD1680, Feather RP2040) ===
-//!   Phase 1 Full: 20044 ms
-//!   Phase 2 windowed Full: 20045 ms
-//!   Phase 2 windowed Full: 20045 ms
-//!   Phase 3 FastFull: 16176 ms
-//!   Phase 4 BaseMap: 19905 ms
-//!   Phase 4 Partial: 19905 ms
-//!   Phase 4 Partial: 19905 ms
+//! Phase 1 Full: 20044 ms
+//! Phase 2 windowed Full: 20045 ms
+//! Phase 2 windowed Full: 20045 ms
+//! Phase 3 FastFull: 16176 ms
+//! Phase 4 BaseMap: 19905 ms
+//! Phase 4 Partial: 19905 ms
+//! Phase 4 Partial: 19905 ms
 //! === done ===
 //! ```
 //!
@@ -95,26 +96,26 @@
 //!
 //! ## Run
 //!
-//! Hold BOOT, press RESET, release BOOT so the `RPI-RP2` volume appears, then:
+//! **Put the board in bootloader mode first**: hold **BOOT**, press and release **RESET**, then
+//! release **BOOT** — the `RPI-RP2` USB mass-storage volume has to be mounted before `cargo run`
+//! can flash it.
 //!
 //! ```bash
 //! cargo run --release --example ssd1680_gdey0266z90_epd
-//! ```
-//!
-//! The panel then works for **about two minutes** with no USB at all — seven refreshes at ~20 s
-//! each, see "Results arrive at the end" above. Only after that does the serial device enumerate.
-//! This waits for it and decodes:
-//!
-//! ```bash
 //! until ls /dev | grep -q "^cu\.usbmodemEPD"; do sleep 1; done
 //! cat /dev/cu.usbmodemEPD* | defmt-print -e target/thumbv6m-none-eabi/release/examples/ssd1680_gdey0266z90_epd
 //! ```
 //!
+//! USB comes up within about a second of boot now — core1 services it independently of the panel,
+//! so the `until` loop above returns almost immediately instead of waiting for the run to finish.
+//! The panel then works for **about two minutes** — seven refreshes at ~20 s each — logging each
+//! phase as it completes.
+//!
 //! `cat` does not exit on its own — Ctrl-C once the output has printed.
 //!
-//! **`zsh: no matches found: /dev/cu.usbmodem*` means the device has not enumerated yet**, not
-//! that anything failed: the panel is still mid-run. Two minutes is a long time to wait if you
-//! are expecting it to be seconds. Wait and retry, or use the loop above.
+//! **`zsh: no matches found: /dev/cu.usbmodem*` right after flashing just means enumeration hasn't
+//! finished yet** — it should clear within a second or two, not the full two-minute run. If it
+//! doesn't clear quickly, confirm the board was actually in bootloader mode before flashing.
 //!
 //! Every example in this repo uses the same USB serial, so that glob never changes. To see
 //! which firmware is actually on the board, read the USB product string:
@@ -139,7 +140,7 @@ use bsp::{entry, pac, XOSC_CRYSTAL_FREQ};
 use defmt_bbq as _;
 use panic_probe as _;
 
-use adafruit_feather_thinkink_discovery::usb_report::{report_and_park, Report, UsbParts};
+use adafruit_feather_thinkink_discovery::usb_report::{spawn_usb_log_pump, Core1Handles, UsbParts};
 
 use embedded_graphics::geometry::{Point, Size};
 use embedded_graphics::mono_font::ascii::{FONT_10X20, FONT_6X10};
@@ -178,8 +179,7 @@ const BAND_BYTES: usize = STRIDE * BAND_H as usize;
 /// `0x26` is a previous-frame buffer sharing the Black/White polarity. Do not copy that across.
 static NO_RED_BAND: [u8; BAND_BYTES] = [0x00u8; BAND_BYTES];
 
-/// Refreshes the panel and returns the elapsed milliseconds. Nothing is logged: USB is not up
-/// during the phases, and `defmt-bbq` discards buffered data while the device is unconfigured.
+/// Refreshes the panel and returns the elapsed milliseconds.
 fn timed_refresh<BUS, C, P>(epd: &mut EpdDriver<BUS, C, P>, timer: &mut Timer) -> u64
 where
     C: EpdController<BUS>,
@@ -372,11 +372,10 @@ fn draw_band_bar(plane: &mut PageBuffer, count: u32, color: BinaryColor) {
 #[entry]
 fn main() -> ! {
     let bbq = defmt_bbq::init().unwrap();
-    let mut report = Report::new();
 
     let mut pac = pac::Peripherals::take().unwrap();
     let mut watchdog = Watchdog::new(pac.WATCHDOG);
-    let sio = Sio::new(pac.SIO);
+    let mut sio = Sio::new(pac.SIO);
 
     let clocks = init_clocks_and_plls(
         XOSC_CRYSTAL_FREQ,
@@ -416,6 +415,27 @@ fn main() -> ! {
         embedded_hal::spi::MODE_0,
     );
 
+    // `pac.RESETS` is free of further borrows past this point, so hand USB servicing to core1: it
+    // polls independently of whatever core0 does next, so `epd.refresh()` can block for as long as
+    // it needs to without starving the USB device.
+    spawn_usb_log_pump(
+        Core1Handles {
+            psm: &mut pac.PSM,
+            ppb: &mut pac.PPB,
+            fifo: &mut sio.fifo,
+        },
+        "GDEY0266Z90 2.66\" Tri-Color (epdsi SSD1680, Feather RP2040)",
+        "Feather RP2040 GDEY0266Z90",
+        UsbParts {
+            regs: pac.USBCTRL_REGS,
+            dpram: pac.USBCTRL_DPRAM,
+            clock: clocks.usb_clock,
+        },
+        pac.RESETS,
+        watchdog,
+        bbq,
+    );
+
     // `SpiBusWrapper` expects the `SpiDevice` to own CS, unlike the hand-rolled `jd79661` example.
     let spi_device = ExclusiveDevice::new_no_delay(spi, cs).unwrap();
     let epd_bus = SpiBusWrapper::new(spi_device, dc, rst, busy);
@@ -448,7 +468,7 @@ fn main() -> ! {
 
         timed_refresh(&mut epd, &mut timer)
     };
-    report.record("Phase 1 Full", phase1);
+    defmt::info!("Phase 1 Full: {} ms", phase1);
 
     timer.delay_ms(2000);
 
@@ -475,7 +495,8 @@ fn main() -> ! {
         }
 
         write_band(&mut epd, &bw_buf[..BAND_BYTES], &red_buf[..BAND_BYTES]);
-        report.record("Phase 2 windowed Full", timed_refresh(&mut epd, &mut timer));
+        let ms = timed_refresh(&mut epd, &mut timer);
+        defmt::info!("Phase 2 windowed Full: {} ms", ms);
         timer.delay_ms(1000);
     }
 
@@ -494,7 +515,7 @@ fn main() -> ! {
 
         timed_refresh(&mut epd, &mut timer)
     };
-    report.record("Phase 3 FastFull", phase3);
+    defmt::info!("Phase 3 FastFull: {} ms", phase3);
 
     timer.delay_ms(2000);
 
@@ -525,7 +546,8 @@ fn main() -> ! {
 
     // NO_RED_BAND rather than the drawn red band: 0x00 is *no* red.
     write_band(&mut epd, &bw_buf[..BAND_BYTES], &NO_RED_BAND);
-    report.record("Phase 4 BaseMap", timed_refresh(&mut epd, &mut timer));
+    let ms = timed_refresh(&mut epd, &mut timer);
+    defmt::info!("Phase 4 BaseMap: {} ms", ms);
 
     timer.delay_ms(1000);
 
@@ -554,7 +576,8 @@ fn main() -> ! {
         }
 
         write_band(&mut epd, &bw_buf[..BAND_BYTES], &red_buf[..BAND_BYTES]);
-        report.record("Phase 4 Partial", timed_refresh(&mut epd, &mut timer));
+        let ms = timed_refresh(&mut epd, &mut timer);
+        defmt::info!("Phase 4 Partial: {} ms", ms);
         timer.delay_ms(1000);
     }
 
@@ -566,23 +589,14 @@ fn main() -> ! {
     epd.set_cursor(0, 0).unwrap();
     epd.sleep(&mut timer).unwrap();
 
-    // Panel work is done. Hand the timings to the shared reporter, which brings USB up and
-    // parks; see `usb_report` in this crate for why nothing can be logged before this point.
-    //
     // Full vs FastFull is the measurement worth reading: on RP2350 this glass gave 20045 vs 16181,
     // a 19% saving. Good Display quote ~20000 vs ~19000 on their own glass, so the saving is a
     // property of the OTP waveform rather than the host -- measure, do not assume.
-    report_and_park(
-        "GDEY0266Z90 2.66\" Tri-Color (epdsi SSD1680, Feather RP2040)",
-        "Feather RP2040 GDEY0266Z90",
-        &report,
-        UsbParts {
-            regs: pac.USBCTRL_REGS,
-            dpram: pac.USBCTRL_DPRAM,
-            clock: clocks.usb_clock,
-        },
-        &mut pac.RESETS,
-        &mut watchdog,
-        bbq,
-    )
+
+    defmt::info!("=== done ===");
+
+    // Core1 keeps servicing USB and draining defmt-bbq indefinitely; core0's work is done.
+    loop {
+        cortex_m::asm::wfi();
+    }
 }

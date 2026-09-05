@@ -34,12 +34,13 @@
 //! panel, where `0x26` is always the Red plane and `0xFF` would paint the region solid red. The
 //! two conventions are easy to confuse; see `ssd1680_gdey0266z90_epd` for the other side of it.
 //!
-//! ## Results arrive at the end, not live
+//! ## Results arrive live, one phase at a time
 //!
 //! There is no debug probe on this board, so logging goes over USB CDC via `defmt-bbq` rather than
 //! RTT. USB CDC needs `usb_dev.poll()` every few milliseconds and `epd.refresh()` blocks for
-//! seconds at a time, so the phases run silently into an array of timings and USB comes up
-//! afterwards to report. The serial device appears roughly 20 seconds after boot.
+//! seconds at a time, so USB is serviced on core1 while core0 runs the phases — see
+//! [`usb_report`](adafruit_feather_thinkink_discovery::usb_report). Each phase's timing is logged
+//! as soon as it completes.
 //!
 //! **Watch the panel meanwhile** — the logo swap is the point of Phase 2 and is impossible to miss.
 //!
@@ -65,9 +66,9 @@
 //!
 //! ```text
 //! === GDEM0213B74 2.13" Mono (epdsi SSD1680, Feather RP2040) ===
-//!   Phase 1 Full: 3893 ms
-//!   Phase 2 partial: 1017 ms   (x6)
-//!   Phase 3 cleanup: 3893 ms
+//! Phase 1 Full: 3893 ms
+//! Phase 2 partial: 1017 ms   (x6)
+//! Phase 3 cleanup: 3893 ms
 //! === done ===
 //! ```
 //!
@@ -83,24 +84,25 @@
 //!
 //! ## Run
 //!
-//! Hold BOOT, press RESET, release BOOT so the `RPI-RP2` volume appears, then:
+//! **Put the board in bootloader mode first**: hold **BOOT**, press and release **RESET**, then
+//! release **BOOT** — the `RPI-RP2` USB mass-storage volume has to be mounted before `cargo run`
+//! can flash it.
 //!
 //! ```bash
 //! cargo run --release --example ssd1680_gdem0213b74_epd
-//! ```
-//!
-//! The panel then works for **about 20 seconds** with no USB at all — see "Results arrive at the
-//! end" above. Only after that does the serial device enumerate. This waits for it and decodes:
-//!
-//! ```bash
 //! until ls /dev | grep -q "^cu\.usbmodemEPD"; do sleep 1; done
 //! cat /dev/cu.usbmodemEPD* | defmt-print -e target/thumbv6m-none-eabi/release/examples/ssd1680_gdem0213b74_epd
 //! ```
 //!
+//! USB comes up within about a second of boot now — core1 services it independently of the panel,
+//! so the `until` loop above returns almost immediately instead of waiting for the run to finish.
+//! The panel then works for **about 20 seconds**, logging each phase as it completes.
+//!
 //! `cat` does not exit on its own — Ctrl-C once the output has printed.
 //!
-//! **`zsh: no matches found: /dev/cu.usbmodem*` means the device has not enumerated yet**, not
-//! that anything failed: the panel is still mid-run. Wait and retry, or use the loop above.
+//! **`zsh: no matches found: /dev/cu.usbmodem*` right after flashing just means enumeration hasn't
+//! finished yet** — it should clear within a second or two, not the full 20 s run. If it doesn't
+//! clear quickly, confirm the board was actually in bootloader mode before flashing.
 //!
 //! Every example in this repo uses the same USB serial, so that glob never changes. To see
 //! which firmware is actually on the board, read the USB product string:
@@ -125,7 +127,7 @@ use bsp::{entry, pac, XOSC_CRYSTAL_FREQ};
 use defmt_bbq as _;
 use panic_probe as _;
 
-use adafruit_feather_thinkink_discovery::usb_report::{report_and_park, Report, UsbParts};
+use adafruit_feather_thinkink_discovery::usb_report::{spawn_usb_log_pump, Core1Handles, UsbParts};
 
 use embedded_graphics::geometry::{Point, Size};
 use embedded_graphics::mono_font::ascii::{FONT_10X20, FONT_6X10};
@@ -204,8 +206,7 @@ fn draw_logos(
     }
 }
 
-/// Refreshes the panel and returns the elapsed milliseconds. Nothing is logged: USB is not up
-/// during the phases, and `defmt-bbq` discards buffered data while the device is unconfigured.
+/// Refreshes the panel and returns the elapsed milliseconds.
 fn timed_refresh<BUS, C, P>(epd: &mut EpdDriver<BUS, C, P>, timer: &mut Timer) -> u64
 where
     C: EpdController<BUS>,
@@ -220,11 +221,10 @@ where
 #[entry]
 fn main() -> ! {
     let bbq = defmt_bbq::init().unwrap();
-    let mut report = Report::new();
 
     let mut pac = pac::Peripherals::take().unwrap();
     let mut watchdog = Watchdog::new(pac.WATCHDOG);
-    let sio = Sio::new(pac.SIO);
+    let mut sio = Sio::new(pac.SIO);
 
     let clocks = init_clocks_and_plls(
         XOSC_CRYSTAL_FREQ,
@@ -262,6 +262,27 @@ fn main() -> ! {
         clocks.peripheral_clock.freq(),
         4_000_000u32.Hz(),
         embedded_hal::spi::MODE_0,
+    );
+
+    // `pac.RESETS` is free of further borrows past this point, so hand USB servicing to core1: it
+    // polls independently of whatever core0 does next, so `epd.refresh()` can block for as long as
+    // it needs to without starving the USB device.
+    spawn_usb_log_pump(
+        Core1Handles {
+            psm: &mut pac.PSM,
+            ppb: &mut pac.PPB,
+            fifo: &mut sio.fifo,
+        },
+        "GDEM0213B74 2.13\" Mono (epdsi SSD1680, Feather RP2040)",
+        "Feather RP2040 GDEM0213B74",
+        UsbParts {
+            regs: pac.USBCTRL_REGS,
+            dpram: pac.USBCTRL_DPRAM,
+            clock: clocks.usb_clock,
+        },
+        pac.RESETS,
+        watchdog,
+        bbq,
     );
 
     // `SpiBusWrapper` expects the `SpiDevice` to own CS, unlike the hand-rolled `jd79661` example.
@@ -337,7 +358,8 @@ fn main() -> ! {
         epd.write_frame(ColorChannel::BlackWhite, display.as_slice())
             .unwrap();
 
-        report.record("Phase 1 Full", timed_refresh(&mut epd, &mut timer));
+        let ms = timed_refresh(&mut epd, &mut timer);
+        defmt::info!("Phase 1 Full: {} ms", ms);
 
         // Seed the "previous image" RAM (0x26) with what is now physically on the panel, so the
         // Phase 2 differential updates have a correct base to diff against.
@@ -410,7 +432,8 @@ fn main() -> ! {
         epd.write_frame(ColorChannel::BlackWhite, &bw_buf[..BAND_BYTES])
             .unwrap();
 
-        report.record("Phase 2 partial", timed_refresh(&mut epd, &mut timer));
+        let ms = timed_refresh(&mut epd, &mut timer);
+        defmt::info!("Phase 2 partial: {} ms", ms);
 
         // Copy the band just displayed into the "previous image" RAM so the next iteration diffs
         // against what is actually on the panel rather than the Phase 1 content.
@@ -444,26 +467,18 @@ fn main() -> ! {
     epd.write_frame(ColorChannel::BlackWhite, &bw_buf[..BAND_BYTES])
         .unwrap();
 
-    report.record("Phase 3 cleanup", timed_refresh(&mut epd, &mut timer));
+    let ms = timed_refresh(&mut epd, &mut timer);
+    defmt::info!("Phase 3 cleanup: {} ms", ms);
 
     // Restore the full-frame RAM window for any subsequent updates.
     epd.set_window(0, 0, GDEM0213B74::WIDTH - 1, GDEM0213B74::HEIGHT - 1)
         .unwrap();
     epd.set_cursor(0, 0).unwrap();
 
-    // Panel work is done. Hand the timings to the shared reporter, which brings USB up and
-    // parks; see `usb_report` in this crate for why nothing can be logged before this point.
-    report_and_park(
-        "GDEM0213B74 2.13\" Mono (epdsi SSD1680, Feather RP2040)",
-        "Feather RP2040 GDEM0213B74",
-        &report,
-        UsbParts {
-            regs: pac.USBCTRL_REGS,
-            dpram: pac.USBCTRL_DPRAM,
-            clock: clocks.usb_clock,
-        },
-        &mut pac.RESETS,
-        &mut watchdog,
-        bbq,
-    )
+    defmt::info!("=== done ===");
+
+    // Core1 keeps servicing USB and draining defmt-bbq indefinitely; core0's work is done.
+    loop {
+        cortex_m::asm::wfi();
+    }
 }

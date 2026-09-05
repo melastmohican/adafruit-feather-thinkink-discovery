@@ -69,17 +69,17 @@
 //! ## A refresh under a second means BUSY never asserted
 //!
 //! This panel takes ~16-20 s. The RP2350 version of this example warns inline when a refresh
-//! returns faster than that; here USB is down while the panel runs, so there is nothing to warn
-//! to. The expectation is carried in the recorded labels instead — a reading of a few
-//! milliseconds against a stated `~17 s` means the controller ignored `DISPLAY_REFRESH` and the
-//! busy poll read idle, not that the panel is fast.
+//! returns faster than that; this port carries the same expectation in the logged labels instead
+//! — a reading of a few milliseconds against a stated `~17 s` means the controller ignored
+//! `DISPLAY_REFRESH` and the busy poll read idle, not that the panel is fast.
 //!
-//! ## Results arrive at the end, not live
+//! ## Results arrive live, one phase at a time
 //!
 //! No SWD connector is fitted on this board, so logging goes over USB CDC via `defmt-bbq` rather
 //! than RTT. USB needs polling every few milliseconds and `epd.refresh()` blocks for seconds, so
-//! the panel runs silently and every timing is reported once it finishes — see
-//! [`usb_report`](adafruit_feather_thinkink_discovery::usb_report).
+//! USB is serviced on core1 while core0 runs the panel — see
+//! [`usb_report`](adafruit_feather_thinkink_discovery::usb_report). Each phase's timing is logged
+//! as soon as it completes.
 //!
 //! **Watch the panel meanwhile.** A stage that completes fast *without* visibly changing the
 //! display has not driven the ink, and no timing figure will tell you that.
@@ -88,8 +88,8 @@
 //!
 //! ```text
 //! === SE0352N14TNGA0 3.52" Tri-Color (epdsi UC8253, Feather RP2040) ===
-//!   Phase 1 panel test: 17366 ms
-//!   Phase 2 Full tri-color: 17365 ms
+//! Phase 1 panel test: 17366 ms
+//! Phase 2 Full tri-color: 17365 ms
 //! === done ===
 //! ```
 //!
@@ -104,11 +104,18 @@
 //!
 //! ## Run
 //!
+//! **Put the board in bootloader mode first**: hold **BOOT**, press and release **RESET**, then
+//! release **BOOT** — the `RPI-RP2` USB mass-storage volume has to be mounted before `cargo run`
+//! can flash it.
+//!
 //! ```bash
 //! cargo run --release --example uc8253_se0352n14_epd
 //! until ls /dev | grep -q "^cu\.usbmodemEPD"; do sleep 1; done
 //! cat /dev/cu.usbmodemEPD* | defmt-print -e target/thumbv6m-none-eabi/release/examples/uc8253_se0352n14_epd
 //! ```
+//!
+//! USB comes up within about a second of boot now — core1 services it independently of the panel,
+//! so the `until` loop above returns almost immediately instead of waiting for the run to finish.
 //!
 //! The `until` loop is glob-free deliberately. In zsh an unmatched glob is a hard error raised by
 //! the shell *before* the command runs, so `ls /dev/cu.usbmodemEPD* 2>/dev/null` still prints
@@ -116,14 +123,15 @@
 //! itself emits. Listing `/dev` and grepping avoids expansion entirely and behaves the same in
 //! bash and zsh.
 //!
-//! Seeing `no matches found` from a bare `cat` just means the panel is still running: `cargo run`
-//! returns after flashing, not after the run. Ctrl-C the `cat` once the output has printed.
+//! **`zsh: no matches found: /dev/cu.usbmodem*` right after flashing just means enumeration hasn't
+//! finished yet** — it should clear within a second or two. If it doesn't clear quickly, confirm
+//! the board was actually in bootloader mode before flashing.
 
 #![no_std]
 #![no_main]
 
 use adafruit_feather_rp2040 as bsp;
-use adafruit_feather_thinkink_discovery::usb_report::{report_and_park, Report, UsbParts};
+use adafruit_feather_thinkink_discovery::usb_report::{spawn_usb_log_pump, Core1Handles, UsbParts};
 use bsp::hal::clocks::init_clocks_and_plls;
 use bsp::hal::fugit::RateExtU32;
 use bsp::hal::gpio::{FunctionSpi, Pins};
@@ -315,11 +323,10 @@ fn draw_red_plane(display: &mut PageBuffer, ferris_bmp: &Bmp<BinaryColor>) {
 #[entry]
 fn main() -> ! {
     let bbq = defmt_bbq::init().unwrap();
-    let mut report = Report::new();
 
     let mut pac = pac::Peripherals::take().unwrap();
     let mut watchdog = Watchdog::new(pac.WATCHDOG);
-    let sio = Sio::new(pac.SIO);
+    let mut sio = Sio::new(pac.SIO);
 
     let clocks = init_clocks_and_plls(
         XOSC_CRYSTAL_FREQ,
@@ -357,6 +364,27 @@ fn main() -> ! {
         clocks.peripheral_clock.freq(),
         4_000_000u32.Hz(),
         embedded_hal::spi::MODE_0,
+    );
+
+    // `pac.RESETS` is free of further borrows past this point, so hand USB servicing to core1: it
+    // polls independently of whatever core0 does next, so `epd.refresh()` can block for as long as
+    // it needs to without starving the USB device.
+    spawn_usb_log_pump(
+        Core1Handles {
+            psm: &mut pac.PSM,
+            ppb: &mut pac.PPB,
+            fifo: &mut sio.fifo,
+        },
+        "SE0352N14TNGA0 3.52\" Tri-Color (epdsi UC8253, Feather RP2040)",
+        "Feather RP2040 SE0352N14",
+        UsbParts {
+            regs: pac.USBCTRL_REGS,
+            dpram: pac.USBCTRL_DPRAM,
+            clock: clocks.usb_clock,
+        },
+        pac.RESETS,
+        watchdog,
+        bbq,
     );
 
     // `SpiBusWrapper` expects the `SpiDevice` to own CS, unlike the hand-rolled `jd79661` example.
@@ -399,7 +427,8 @@ fn main() -> ! {
     epd.write_frame(ColorChannel::BlackWhite, &bw_buf).unwrap();
     epd.write_frame(ColorChannel::RedYellow, &red_buf).unwrap();
 
-    report.record("Phase 1 panel test", refresh_timed(&mut epd, &mut timer));
+    let ms = refresh_timed(&mut epd, &mut timer);
+    defmt::info!("Phase 1 panel test: {} ms", ms);
 
     timer.delay_ms(3000);
 
@@ -420,27 +449,18 @@ fn main() -> ! {
     epd.write_frame(ColorChannel::BlackWhite, &bw_buf).unwrap();
     epd.write_frame(ColorChannel::RedYellow, &red_buf).unwrap();
 
-    report.record(
-        "Phase 2 Full tri-color",
-        refresh_timed(&mut epd, &mut timer),
-    );
+    let ms = refresh_timed(&mut epd, &mut timer);
+    defmt::info!("Phase 2 Full tri-color: {} ms", ms);
 
     // After sleep the controller is in deep sleep: init() must be called again before drawing.
     epd.sleep(&mut timer).unwrap();
 
-    report_and_park(
-        "SE0352N14TNGA0 3.52\" Tri-Color (epdsi UC8253, Feather RP2040)",
-        "Feather RP2040 SE0352N14",
-        &report,
-        UsbParts {
-            regs: pac.USBCTRL_REGS,
-            dpram: pac.USBCTRL_DPRAM,
-            clock: clocks.usb_clock,
-        },
-        &mut pac.RESETS,
-        &mut watchdog,
-        bbq,
-    )
+    defmt::info!("=== done ===");
+
+    // Core1 keeps servicing USB and draining defmt-bbq indefinitely; core0's work is done.
+    loop {
+        cortex_m::asm::wfi();
+    }
 }
 
 /// Refreshes the panel and reports how long it took.

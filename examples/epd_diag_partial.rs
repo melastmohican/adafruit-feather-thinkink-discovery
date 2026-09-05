@@ -5,22 +5,18 @@
 //! differ. Those two log over RTT, which needs a debug probe. **This board has no SWD connector
 //! fitted**, so results come over USB CDC via `defmt-bbq` instead — no probe and no soldering.
 //!
-//! ## Why the results arrive all at once, at the end
+//! ## Results arrive live, one test at a time
 //!
 //! USB CDC needs `usb_dev.poll()` called every few milliseconds or the host drops the device, and
-//! `epd.refresh()` blocks for seconds at a time with nothing to pump it. `defmt-bbq` also
-//! *discards* buffered log data while the device is unconfigured, so anything logged before the
-//! host connects is gone.
+//! `epd.refresh()` blocks for seconds at a time with nothing to pump it. USB is serviced on core1
+//! while core0 runs the tests — see
+//! [`usb_report`](adafruit_feather_thinkink_discovery::usb_report). Each test's timing is logged
+//! as soon as it completes.
 //!
-//! So this example runs all three tests silently, holding the timings in variables, and only then
-//! brings USB up and reports. The serial device appears roughly 15 seconds after boot with every
-//! result already in it.
-//!
-//! You lose live progress, which matters less than it sounds: **the panel is the better
-//! instrument here anyway.** Each stage draws a distinct pattern — A horizontal stripes, B
-//! inverted stripes, C stripes only below y=50 — so you can watch the sequence advance without
-//! any log at all. A stage that finishes fast *without* visibly changing the panel has not driven
-//! the ink, and that is a different fault from one that stalls.
+//! **The panel is the better instrument here anyway.** Each stage draws a distinct pattern — A
+//! horizontal stripes, B inverted stripes, C stripes only below y=50 — so you can watch the
+//! sequence advance without any log at all. A stage that finishes fast *without* visibly changing
+//! the panel has not driven the ink, and that is a different fault from one that stalls.
 //!
 //! ## Measurements so far
 //!
@@ -46,9 +42,9 @@
 //!
 //! ```text
 //! === SSD1680 partial-refresh bisect (Feather RP2040 ThinkInk) ===
-//!   A  full frame, Full: 3893 ms
-//!   B  full frame, Partial (RP2350 1018, healthy C3 ~1017, faulty C3 98):   1018 ms
-//!   C  band, Partial       (RP2350 1018, healthy C3 ~1017, faulty C3 333):  1018 ms
+//! A  full frame, Full: 3893 ms
+//! B  full frame, Partial (RP2350 1018, healthy C3 ~1017, faulty C3 98):   1018 ms
+//! C  band, Partial       (RP2350 1018, healthy C3 ~1017, faulty C3 333):  1018 ms
 //! === done ===
 //! ```
 //!
@@ -57,26 +53,26 @@
 //!
 //! ## Run
 //!
-//! Hold BOOT, press RESET, release BOOT so the `RPI-RP2` volume appears, then:
+//! **Put the board in bootloader mode first**: hold **BOOT**, press and release **RESET**, then
+//! release **BOOT** — the `RPI-RP2` USB mass-storage volume has to be mounted before `cargo run`
+//! can flash it.
 //!
 //! ```bash
 //! cargo run --release --example epd_diag_partial
-//! ```
-//!
-//! The panel then runs A, B and C for **about 15 seconds** with no USB at all — see "Why the
-//! results arrive all at once" above. Only after that does the serial device enumerate. This
-//! waits for it and decodes:
-//!
-//! ```bash
 //! until ls /dev | grep -q "^cu\.usbmodemEPD"; do sleep 1; done
 //! cat /dev/cu.usbmodemEPD* | defmt-print -e target/thumbv6m-none-eabi/release/examples/epd_diag_partial
 //! ```
 //!
+//! USB comes up within about a second of boot now — core1 services it independently of the panel,
+//! so the `until` loop above returns almost immediately instead of waiting for the run to finish.
+//! The panel then runs A, B and C for **about 15 seconds**, and each result logs as it lands.
+//!
 //! `cat` does not exit on its own — Ctrl-C once the output has printed. `screen` will show binary
 //! garbage: the frames are defmt-encoded, so `defmt-print` is required.
 //!
-//! **`zsh: no matches found: /dev/cu.usbmodem*` means the device has not enumerated yet**, not
-//! that anything failed: the panel is still mid-run. Wait and retry, or use the loop above.
+//! **`zsh: no matches found: /dev/cu.usbmodem*` right after flashing just means enumeration hasn't
+//! finished yet** — it should clear within a second or two, not the full 15 s run. If it doesn't
+//! clear quickly, confirm the board was actually in bootloader mode before flashing.
 //!
 //! Every example in this repo uses the same USB serial, so that glob never changes. To see
 //! which firmware is actually on the board, read the USB product string:
@@ -105,7 +101,7 @@ use bsp::{entry, pac, XOSC_CRYSTAL_FREQ};
 use defmt_bbq as _;
 use panic_probe as _;
 
-use adafruit_feather_thinkink_discovery::usb_report::{report_and_park, Report, UsbParts};
+use adafruit_feather_thinkink_discovery::usb_report::{spawn_usb_log_pump, Core1Handles, UsbParts};
 
 use embedded_hal::delay::DelayNs;
 use embedded_hal_bus::spi::ExclusiveDevice;
@@ -132,11 +128,10 @@ fn stripes(buf: &mut [u8], rows: usize, phase: usize) {
 #[entry]
 fn main() -> ! {
     let bbq = defmt_bbq::init().unwrap();
-    let mut report = Report::new();
 
     let mut pac = pac::Peripherals::take().unwrap();
     let mut watchdog = Watchdog::new(pac.WATCHDOG);
-    let sio = Sio::new(pac.SIO);
+    let mut sio = Sio::new(pac.SIO);
 
     let clocks = init_clocks_and_plls(
         XOSC_CRYSTAL_FREQ,
@@ -177,6 +172,27 @@ fn main() -> ! {
         embedded_hal::spi::MODE_0,
     );
 
+    // `pac.RESETS` is free of further borrows past this point, so hand USB servicing to core1: it
+    // polls independently of whatever core0 does next, so `epd.refresh()` can block for as long as
+    // it needs to without starving the USB device.
+    spawn_usb_log_pump(
+        Core1Handles {
+            psm: &mut pac.PSM,
+            ppb: &mut pac.PPB,
+            fifo: &mut sio.fifo,
+        },
+        "SSD1680 partial-refresh bisect (Feather RP2040 ThinkInk)",
+        "Feather RP2040 EPD diag",
+        UsbParts {
+            regs: pac.USBCTRL_REGS,
+            dpram: pac.USBCTRL_DPRAM,
+            clock: clocks.usb_clock,
+        },
+        pac.RESETS,
+        watchdog,
+        bbq,
+    );
+
     // Unlike the hand-rolled `jd79661` example here, `SpiBusWrapper` expects the `SpiDevice` to
     // own CS, so the real chip-select goes to `ExclusiveDevice` rather than a dummy pin.
     let spi_device = ExclusiveDevice::new_no_delay(spi, cs).unwrap();
@@ -187,11 +203,6 @@ fn main() -> ! {
     epd.init(&mut timer).unwrap();
 
     let mut buf = [0xFFu8; FRAME_BYTES];
-
-    // ---------------------------------------------------------------------------------------
-    // Tests run silently. Nothing is logged here: USB is not up yet, and defmt-bbq discards
-    // buffered data while the device is unconfigured, so anything logged now would be lost.
-    // ---------------------------------------------------------------------------------------
 
     // --- A: full frame, Full mode. Baseline. Panel: horizontal stripes. ---
     epd.controller_mut()
@@ -209,10 +220,8 @@ fn main() -> ! {
 
     let t = timer.get_counter().ticks();
     epd.refresh(&mut timer).unwrap();
-    report.record(
-        "A  full frame, Full",
-        (timer.get_counter().ticks() - t) / 1000,
-    );
+    let ms = (timer.get_counter().ticks() - t) / 1000;
+    defmt::info!("A  full frame, Full: {} ms", ms);
     timer.delay_ms(3000);
 
     // --- B: full frame, Partial mode. Panel: stripes invert. ---
@@ -227,10 +236,8 @@ fn main() -> ! {
 
     let t = timer.get_counter().ticks();
     epd.refresh(&mut timer).unwrap();
-    report.record(
-        "B  full frame, Partial",
-        (timer.get_counter().ticks() - t) / 1000,
-    );
+    let ms = (timer.get_counter().ticks() - t) / 1000;
+    defmt::info!("B  full frame, Partial: {} ms", ms);
     timer.delay_ms(3000);
 
     // Keep the previous-image RAM in step so C diffs against what is on the panel.
@@ -250,21 +257,13 @@ fn main() -> ! {
 
     let t = timer.get_counter().ticks();
     epd.refresh(&mut timer).unwrap();
-    report.record("C  band, Partial", (timer.get_counter().ticks() - t) / 1000);
+    let ms = (timer.get_counter().ticks() - t) / 1000;
+    defmt::info!("C  band, Partial: {} ms", ms);
 
-    // Panel work is done. Hand the timings to the shared reporter, which brings USB up and
-    // parks; see `usb_report` in this crate for why nothing can be logged before this point.
-    report_and_park(
-        "SSD1680 partial-refresh bisect (Feather RP2040 ThinkInk)",
-        "Feather RP2040 EPD diag",
-        &report,
-        UsbParts {
-            regs: pac.USBCTRL_REGS,
-            dpram: pac.USBCTRL_DPRAM,
-            clock: clocks.usb_clock,
-        },
-        &mut pac.RESETS,
-        &mut watchdog,
-        bbq,
-    )
+    defmt::info!("=== done ===");
+
+    // Core1 keeps servicing USB and draining defmt-bbq indefinitely; core0's work is done.
+    loop {
+        cortex_m::asm::wfi();
+    }
 }

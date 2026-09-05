@@ -249,7 +249,7 @@ is what identified a failing XIAO ESP32-C3.
 cargo run --release --example epd_diag_partial
 ```
 
-> Examples 16-23 report over USB serial and print nothing until the panel work finishes — see
+> Examples 16-23 report over USB serial, logged live as each phase completes — see
 > [Logging without a probe](#logging-without-a-probe).
 
 ## Flashing and logging
@@ -316,24 +316,16 @@ SWCLK / GND / SWDIO; the probe does not power the target, so both stay on their 
 USB CDC instead — see `usb_serial_defmt.rs` and the eight e-paper examples.
 
 USB CDC needs `usb_dev.poll()` every few milliseconds, and an e-paper refresh blocks for seconds
-at a time. So the e-paper examples **run the panel silently and only bring USB up at the end**.
-That means the serial device does not exist while the panel is working:
+at a time. The e-paper examples solve this by servicing USB on the RP2040's **second core**
+(`src/usb_report.rs`): core1 brings USB up and polls it independently of whatever core0 is doing,
+so the serial device enumerates within about a second of boot regardless of how long the panel
+work takes, and each phase's `defmt::info!` line reaches the host live as it completes — not
+buffered until the run finishes.
 
-| Example | Panel work before USB appears |
-| :--- | ---: |
-| `uc8253_gdey037t03_epd` | ~15 s |
-| `epd_diag_partial` | ~15 s |
-| `ssd1680_gdem0213b74_epd` | ~20 s |
-| `ssd1677_gdeq0426t82_epd` | ~20 s |
-| `jd79661_zjy122250_epd` | ~25 s |
-| `uc8253_se0352n14_epd` | ~40 s |
-| `ssd1680_gdey0266z90_epd` | ~2 min |
-| `ssd1681_gdem0154z90_epd` | ~2 min |
-
-> **`zsh: no matches found: /dev/cu.usbmodem*` means the device has not enumerated yet**, not that
-> anything failed. The catch is that **`cargo run` returns as soon as flashing completes** — your
-> prompt comes back and it looks finished, but the board is only just starting its panel work with
-> USB down. Pasting the `cat` command straight after is guaranteed to be too early.
+> **`zsh: no matches found: /dev/cu.usbmodem*` right after flashing just means enumeration hasn't
+> finished yet** — it should clear within a second or two now, not the length of the panel run. If
+> it doesn't clear quickly, confirm the board was actually in bootloader mode before flashing (see
+> route 1 above).
 >
 > Note the wait loop below is deliberately glob-free. In zsh an unmatched glob is a hard error
 > raised by the shell *before* the command runs, so `ls /dev/cu.usbmodemEPD* 2>/dev/null` prints
@@ -341,7 +333,7 @@ That means the serial device does not exist while the panel is working:
 > message the shell itself emits, and the `&& break` never fires. Listing `/dev` and grepping
 > avoids expansion entirely and works the same in bash and zsh.
 
-So wait for it rather than guessing. Only the ELF path changes between examples:
+Only the ELF path changes between examples:
 
 ```bash
 until ls /dev | grep -q "^cu\.usbmodemEPD"; do sleep 1; done
