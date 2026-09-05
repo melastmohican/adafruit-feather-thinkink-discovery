@@ -254,7 +254,7 @@ cargo run --release --example epd_diag_partial
 
 ## Flashing and logging
 
-Three routes, in `.cargo/config.toml`. Only the first needs no extra hardware and no working
+Two routes, in `.cargo/config.toml`. Only the first needs no extra hardware and no working
 `picotool`, which is why it is the current default.
 
 ### 1. `elf2uf2-rs` — mass storage (default)
@@ -299,21 +299,14 @@ picotool info; echo "exit=$?"   # 139 means the segfault is still there
 
 Note that `picotool info | head` masks this — you get `head`'s exit code, not picotool's.
 
-### 3. `probe-rs` — SWD
-
-```toml
-runner = "probe-rs run --chip RP2040 --protocol swd"
-```
-
-The nicest option: flashing plus live RTT logging plus stack unwind on panic. **No SWD connector
-is fitted on this board** — SWCLK/SWDIO are pads on the back, plus an unpopulated 2×5 0.05"
-header footprint, so it needs soldering. A Raspberry Pi Debug Probe's "D" port carries
-SWCLK / GND / SWDIO; the probe does not power the target, so both stay on their own USB.
-
 ### Logging without a probe
 
-`defmt` output normally goes over RTT, which needs route 3. Without a probe, use `defmt-bbq` over
-USB CDC instead — see `usb_serial_defmt.rs` and the eight e-paper examples.
+This board has no way to reach RTT: unlike the plain Feather RP2040, which has solderable
+SWCLK/SWDIO pads and an unpopulated 2×5 0.05" debug header footprint on the back, the ThinkInk
+variant (product 5727) has neither — confirmed against Adafruit's own pinouts and schematic for
+this specific board. There is no `probe-rs`/SWD route here at all, not even one that needs
+soldering. `defmt-bbq` over USB CDC is the only logging path — see `usb_serial_defmt.rs` and the
+eight e-paper examples.
 
 USB CDC needs `usb_dev.poll()` every few milliseconds, and an e-paper refresh blocks for seconds
 at a time. The e-paper examples solve this by servicing USB on the RP2040's **second core**
