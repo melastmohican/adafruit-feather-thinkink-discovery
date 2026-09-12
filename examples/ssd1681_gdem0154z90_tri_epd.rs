@@ -244,12 +244,10 @@ fn main() -> ! {
         .unwrap();
 
     // Frame buffers: 200 x 200 / 8 = 5,000 bytes each
-    let mut bw_buf = [POLARITY.bw_background_byte(); (GDEM0154Z90::WIDTH as usize
-        * GDEM0154Z90::HEIGHT as usize)
-        / 8];
-    let mut red_buf = [POLARITY.accent_background_byte(); (GDEM0154Z90::WIDTH as usize
-        * GDEM0154Z90::HEIGHT as usize)
-        / 8];
+    let mut bw_buf = [POLARITY.bw_background_byte();
+        (GDEM0154Z90::WIDTH as usize * GDEM0154Z90::HEIGHT as usize) / 8];
+    let mut red_buf = [POLARITY.accent_background_byte();
+        (GDEM0154Z90::WIDTH as usize * GDEM0154Z90::HEIGHT as usize) / 8];
 
     // Load BMP images
     let ferris_bmp: Bmp<BinaryColor> = Bmp::from_slice(include_bytes!("ferrisbw.bmp")).unwrap();
