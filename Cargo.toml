@@ -39,7 +39,7 @@ heapless = "0.8.0"
 log = "0.4.20"
 critical-section = "1.1.2"
 embedded-hal-bus = "0.3.0"
-epdsi = { version = "0.3", features = ["defmt"] }
+epdsi = { version = "0.4", features = ["defmt"] }
 sh1107-driver = { version = "0.1.0", features = ["graphics"] }
 
 # If you're not going to use a Board Support Package you'll need these:
