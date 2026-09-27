@@ -237,6 +237,62 @@ Each example's docs carry its measured output and, where one exists, the RP2350 
 Two references disagree with this board — the 1.54"'s ~14 s and the 4.26"'s ~1000 ms partial — and
 both are flagged as unresolved in the relevant example rather than quietly corrected.
 
+#### Additional `epdsi` examples (added after the seven above; not yet in the timing table or photo)
+
+| Example | Panel | Controller |
+| :--- | :--- | :--- |
+| `jd79660_gdem0154f51h_epd` | 1.54" Quad-Color, 200x200 | JD79660A |
+| `ssd1680_gdey0266z90_tri_epd` | 2.66" Tri-Color, `PageBufferPair` API | SSD1680 |
+| `ssd1681_gdem0154z90_tri_epd` | 1.54" Tri-Color, `PageBufferPair` API | SSD1681 |
+| `uc8253_se0352n14_tri_epd` | 3.52" Tri-Color, `PageBufferPair` API | UC8253 |
+| `ssd1680_gdey0266t90_epd` | 2.66" Mono, 152x296 | SSD1680 |
+| `ssd1680_gdey0266t90_gray4_epd` | 2.66" 4-level grayscale | SSD1680 |
+| `ssd1677_gdeq0426t82_gray4_epd` | 4.26" 4-level grayscale | SSD1677 |
+
+The three `_tri_epd` entries are full-parity companions to their base example (`ssd1680_gdey0266z90_epd`,
+`ssd1681_gdem0154z90_epd`, `uc8253_se0352n14_epd` — same phases, content, hardware) drawn entirely
+through `PageBufferPair`/`TriColor` instead of two separate `PageBuffer`s and panel-specific ink
+polarity choices; `jd79660_gdem0154f51h_epd` shares its SPI register table with
+`jd79661_zjy122250_epd` (both wrap `Jd7966xController`). `GDEY0266T90::GRAY4` and
+`GDEQ0426T82::GRAY4` are both Adafruit_EPD-sourced (not Good Display/Seeed/Waveshare material) —
+see each panel's `epdsi` doc for the provenance note. `GDEQ0426T82`'s Gray4 mode is two-pass
+(`Ssd1677RefreshMode::Gray4Preclear` then `Gray4`, with an LUT reload between), unlike
+`GDEY0266T90`'s single-pass mode.
+
+**Hardware status differs per entry — checked against each example's own doc comment, not
+assumed:**
+- The three `_tri_epd` variants: confirmed on this board, real measured output below.
+- `ssd1677_gdeq0426t82_gray4_epd`: confirmed rendering four distinct gray levels on this board.
+- `ssd1680_gdey0266t90_epd`: **not yet confirmed on this board** — its doc comment only quotes an
+  RP2350 reference figure and says it "logs its own measured timings," not that it has been run
+  here.
+- `ssd1680_gdey0266t90_gray4_epd`: **explicitly not yet verified on hardware**, per its own doc
+  comment ("This example is exactly that verification: run it, and see what actually lights up").
+- `jd79660_gdem0154f51h_epd`: **explicitly not yet run on physical hardware**, per its own doc
+  comment — written against a local, unreleased `epdsi` checkout, not yet flashed here.
+
+```text
+=== GDEY0266Z90 2.66" Tri-Color, PageBufferPair (epdsi SSD1680, Feather RP2040) ===
+Phase 1 Full: 20044 ms · Phase 3 FastFull: 16176 ms · Phase 4 BaseMap/Partial: 19905 ms
+(same shape as ssd1680_gdey0266z90_epd's own numbers — only the buffer construction changed)
+
+=== GDEM0154Z90 1.54" Tri-Color, PageBufferPair (epdsi SSD1681, Feather RP2040) ===
+Phase 1 Full: 17881 ms (carried over from ssd1681_gdem0154z90_epd, not re-measured)
+
+=== SE0352N14TNGA0 3.52" Tri-Color, PageBufferPair (epdsi UC8253, Feather RP2040) ===
+Phase 1 panel test: 17366 ms · Phase 2 Full tri-color: 17365 ms
+```
+
+```bash
+cargo run --release --example jd79660_gdem0154f51h_epd
+cargo run --release --example ssd1680_gdey0266z90_tri_epd
+cargo run --release --example ssd1681_gdem0154z90_tri_epd
+cargo run --release --example uc8253_se0352n14_tri_epd
+cargo run --release --example ssd1680_gdey0266t90_epd
+cargo run --release --example ssd1680_gdey0266t90_gray4_epd
+cargo run --release --example ssd1677_gdeq0426t82_gray4_epd
+```
+
 ### 23. SSD1680 Partial-Refresh Bisect (`examples/epd_diag_partial.rs`)
 
 Diagnostic rather than demo, for the 2.13" panel. Times three cases — full frame on `Full`, full
