@@ -248,6 +248,7 @@ both are flagged as unresolved in the relevant example rather than quietly corre
 | `ssd1680_gdey0266t90_epd` | 2.66" Mono, 152x296 | SSD1680 |
 | `ssd1680_gdey0266t90_gray4_epd` | 2.66" 4-level grayscale | SSD1680 |
 | `ssd1677_gdeq0426t82_gray4_epd` | 4.26" 4-level grayscale | SSD1677 |
+| `ssd1680_gdem0213b74_gray4_epd` | 2.13" 4-level grayscale, 122x250 | SSD1680 |
 
 The three `_tri_epd` entries are full-parity companions to their base example (`ssd1680_gdey0266z90_epd`,
 `ssd1681_gdem0154z90_epd`, `uc8253_se0352n14_epd` — same phases, content, hardware) drawn entirely
@@ -270,6 +271,10 @@ assumed:**
   comment ("This example is exactly that verification: run it, and see what actually lights up").
 - `jd79660_gdem0154f51h_epd`: **explicitly not yet run on physical hardware**, per its own doc
   comment — written against a local, unreleased `epdsi` checkout, not yet flashed here.
+- `ssd1680_gdem0213b74_gray4_epd`: confirmed rendering four distinct gray levels on this board,
+  despite its panel being stamped `FPC-7528B` (see the example's own doc comment for why that
+  revision was worth watching here specifically). The `_colstart` offset either doesn't apply to
+  this unit or doesn't matter for Gray4; no shift was observed.
 
 ```text
 === GDEY0266Z90 2.66" Tri-Color, PageBufferPair (epdsi SSD1680, Feather RP2040) ===
@@ -291,6 +296,7 @@ cargo run --release --example uc8253_se0352n14_tri_epd
 cargo run --release --example ssd1680_gdey0266t90_epd
 cargo run --release --example ssd1680_gdey0266t90_gray4_epd
 cargo run --release --example ssd1677_gdeq0426t82_gray4_epd
+cargo run --release --example ssd1680_gdem0213b74_gray4_epd
 ```
 
 ### 23. SSD1680 Partial-Refresh Bisect (`examples/epd_diag_partial.rs`)
