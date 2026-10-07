@@ -21,7 +21,8 @@ cargo generate --git https://github.com/rp-rs/rp2040-project-template
 ## Hardware Supported
 
 - **Board**: [Adafruit RP2040 Feather ThinkInk](https://www.adafruit.com/product/5727)
-- **Displays**: Seven panels across five controller ICs have been driven from the onboard modular
+- **Displays**: Seven panels across five controller ICs have been driven through the
+  [`epdsi`](https://github.com/melastmohican/epdsi) framework from the onboard modular
   24-pin FPC connector, all verified on hardware — see [the panel examples](#16-22-e-paper-panels-via-epdsi).
   Two are also driven by the standalone drivers in this repo:
   - 1.54" Tri-Color (Red/Black/White) e-Paper display ([GDEM0154Z90](https://www.good-display.com/product/436.html)). Controller: **SSD1681**.
