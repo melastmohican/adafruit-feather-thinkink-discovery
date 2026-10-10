@@ -243,6 +243,7 @@ both are flagged as unresolved in the relevant example rather than quietly corre
 | Example | Panel | Controller |
 | :--- | :--- | :--- |
 | `jd79660_gdem0154f51h_epd` | 1.54" Quad-Color, 200x200 | JD79660A |
+| `jd79676_gdey0213f52_epd` | 2.13" Quad-Color, 122x250 (not the F51: check the `0213SW-F52-B2` sticker) | JD79676A |
 | `ssd1680_gdey0266z90_tri_epd` | 2.66" Tri-Color, `PageBufferPair` API | SSD1680 |
 | `ssd1681_gdem0154z90_tri_epd` | 1.54" Tri-Color, `PageBufferPair` API | SSD1681 |
 | `uc8253_se0352n14_tri_epd` | 3.52" Tri-Color, `PageBufferPair` API | UC8253 |
