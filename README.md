@@ -272,7 +272,9 @@ assumed:**
   RP2350 reference figure and says it "logs its own measured timings," not that it has been run
   here.
 - `ssd1685_gdey0266t90h_epd`: confirmed on this board (11 Oct 2026). Measured: Phase 1 Full
-  1191 ms, Phase 2 partial 356 ms each (five updates), Phase 3 cleanup 1191 ms. Needs `epdsi` 0.8.0, so this
+  1191 ms, Phase 2 partial 356 ms each (five updates), Phase 3 cleanup 1191 ms. Phase 4 `FastFull`
+  measured 1678 ms against 1191 ms for Full, the same as on the Pico 2 and XIAO, so it is slower on
+  this panel. Needs `epdsi` 0.8.0, so this
   repo carries a temporary `[patch.crates-io]` path override until that release.
 - `ssd1680_gdey0266t90_gray4_epd`: **explicitly not yet verified on hardware**, per its own doc
   comment ("This example is exactly that verification: run it, and see what actually lights up").

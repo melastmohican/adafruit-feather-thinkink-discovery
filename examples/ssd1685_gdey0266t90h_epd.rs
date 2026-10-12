@@ -11,7 +11,7 @@
 //! the two read side by side: Full, then a partial-window loop that swaps two logos on every pass,
 //! then a full-waveform cleanup pass.
 //!
-//! **Hardware-verified on the Feather RP2040 ThinkInk** (11 Oct 2026). Needs `epdsi` 0.8.0 or later for the variant.
+//! **Hardware-verified on the Feather RP2040 ThinkInk** (11 Oct 2026, including Phase 4 FastFull). Needs `epdsi` 0.8.0 or later for the variant.
 //! Register sequence follows Good Display's `A32-GDEY0266T90H-2FP-20230915` demo and the SSD1685
 //! datasheet; see the `GDEY0266T90H` panel doc in `epdsi` for the two deliberate departures
 //! (`0xF7` full, `0xDC` partial).
@@ -29,6 +29,9 @@
 //! 3. **Phase 3**: Full-waveform cleanup pass over the whole content band (logos, footer and
 //!    status line), restoring the ink density the shortened Phase 2 differential waveform leaves
 //!    behind — the same idiom `ssd1680_gdem0213b74_epd`/`uc8253_gdey037t03_epd` use.
+//! 4. **Phase 4**: `FastFull`, the vendor's temperature-override fast update, on a full-frame
+//!    redraw, timed against Phase 1. Measured on this board and on the Pico 2 and XIAO (11 Oct 2026): 1678 ms against 1191 ms for
+//!    Full on all three, so on this panel at room temperature it is slower, not faster.
 //!
 //! ## Note on refresh speed
 //!
@@ -542,6 +545,25 @@ fn main() -> ! {
 
     let ms = timed_refresh(&mut epd, &mut timer);
     defmt::info!("Phase 3 cleanup: {} ms", ms);
+
+    timer.delay_ms(2000);
+
+    // --- Phase 4: FastFull on a full-frame redraw. ---
+    // Phase 4 runs last and redraws the WHOLE frame. `bw_buf` holds band-relative content from
+    // Phase 3, and `write_full_frame` sends a full-frame window, so reusing it as-is would paint a
+    // shifted duplicate (the failure an earlier SSD1680 example hit). The vendor's fast path also
+    // zeroes `0x26` before the update, which `write_full_frame` already does.
+    {
+        let mut display =
+            PageBuffer::new(&mut bw_buf, GDEY0266T90H::WIDTH, GDEY0266T90H::HEIGHT, 0);
+        display.clear_byte(0xFF);
+        draw_static_content(&mut display, &ferris_bmp, &rust_bmp, "mode: FastFull");
+        write_full_frame(&mut epd, display.as_slice());
+    }
+    epd.controller_mut()
+        .set_refresh_mode(Ssd168xRefreshMode::FastFull);
+    let ms = timed_refresh(&mut epd, &mut timer);
+    defmt::info!("Phase 4 FastFull: {} ms", ms);
 
     // Restore the full-frame RAM window and the default waveform for any subsequent updates.
     epd.controller_mut()
