@@ -250,6 +250,7 @@ both are flagged as unresolved in the relevant example rather than quietly corre
 | `uc8253_se0352n14_tri_epd` | 3.52" Tri-Color, `PageBufferPair` API | UC8253 |
 | `ssd1680_gdey0266t90_epd` | 2.66" Mono, 152x296 | SSD1680 |
 | `ssd1680_gdey0266t90_gray4_epd` | 2.66" 4-level grayscale | SSD1680 |
+| `ssd1685_gdey0266t90h_epd` | 2.66" Mono, 184x360 (a different glass from `GDEY0266T90`; needs `epdsi` 0.8.0) | SSD1685 |
 | `ssd1677_gdeq0426t82_gray4_epd` | 4.26" 4-level grayscale | SSD1677 |
 | `ssd1680_gdem0213b74_gray4_epd` | 2.13" 4-level grayscale, 122x250 | SSD1680 |
 
@@ -270,6 +271,9 @@ assumed:**
 - `ssd1680_gdey0266t90_epd`: **not yet confirmed on this board** — its doc comment only quotes an
   RP2350 reference figure and says it "logs its own measured timings," not that it has been run
   here.
+- `ssd1685_gdey0266t90h_epd`: confirmed on this board (11 Oct 2026). Measured: Phase 1 Full
+  1191 ms, Phase 2 partial 356 ms each (five updates), Phase 3 cleanup 1191 ms. Needs `epdsi` 0.8.0, so this
+  repo carries a temporary `[patch.crates-io]` path override until that release.
 - `ssd1680_gdey0266t90_gray4_epd`: **explicitly not yet verified on hardware**, per its own doc
   comment ("This example is exactly that verification: run it, and see what actually lights up").
 - `jd79660_gdem0154f51h_epd`: **explicitly not yet run on physical hardware**, per its own doc
@@ -298,6 +302,7 @@ cargo run --release --example ssd1681_gdem0154z90_tri_epd
 cargo run --release --example uc8253_se0352n14_tri_epd
 cargo run --release --example ssd1680_gdey0266t90_epd
 cargo run --release --example ssd1680_gdey0266t90_gray4_epd
+cargo run --release --example ssd1685_gdey0266t90h_epd
 cargo run --release --example ssd1677_gdeq0426t82_gray4_epd
 cargo run --release --example ssd1680_gdem0213b74_gray4_epd
 ```
