@@ -10,6 +10,21 @@
 //! GDEY0213F51 (JD79661). Check the rear sticker (`0213SW-F52-B2`) before choosing between this
 //! example and `jd79661_zjy122250_epd`.
 //!
+//! ## Phases
+//!
+//! 0. **Panel check**: resets the panel and reads its `R70H` revision register over a bit-banged
+//!    3-wire bus, before SPI takes SCK and MOSI, then logs which unit it is. Seen so far:
+//!    `09 02 01` (Seeed `0213SW-F52-B2`), `89 02 01` (Good Display `GDEY0213F52`) and
+//!    `09 01 01` (Adafruit `ZJY122250`, which wants `jd79661_zjy122250_epd` instead). It never
+//!    powers on or refreshes the panel, and the example carries on whatever it reads.
+//! 1. **Phase 1**: full refresh, timed.
+//! 2. **Phase 2**: the same frame with the footer relabelled, refreshed with
+//!    `Jd7966xRefreshMode::Fast` (Good Display's `EPD_init_Fast()`) and timed against Phase 1.
+//!    Needs `epdsi` 0.8.1 or later. A raw-command probe of the same sequence on a
+//!    XIAO ESP32-C3 measured 15.9 s for Full and 10.9 s for Fast on two units, with clean colours
+//!    (12 Oct 2026). This example itself, run on the Feather RP2040 ThinkInk with a Good Display
+//!    unit (`R70H` = `89 02 01`), measured 15914 ms for Full and 10944 ms for Fast.
+//!
 //! ## Hardware
 //!
 //! - **Board:** Adafruit Feather RP2040 ThinkInk ([Product 5727](https://www.adafruit.com/product/5727))
@@ -41,13 +56,17 @@
 //! ## Measured output
 //!
 //! ```text
+//! Panel R70H = [89, 02, 01]: matches the Good Display GDEY0213F52 unit seen (lot N5B3S02)
 //! === GDEY0213F52 2.13" Quad-Color (epdsi JD79676, Feather RP2040) ===
-//! Full quad-color refresh: 15925 ms
+//! Full quad-color refresh: 15914 ms
+//! Fast quad-color refresh: 10944 ms (Full was 15914 ms)
 //! === done ===
 //! ```
 //!
-//! The datasheet figure is about 11 s. This run measured 15.9 s, about 4 s faster than the
-//! GDEY0213F51 on the same board (20041 ms in `jd79661_zjy122250_epd`).
+//! The datasheet figure is about 11 s. Full measured 15.9 s, about 4 s faster than the
+//! GDEY0213F51 on the same board (20041 ms in `jd79661_zjy122250_epd`), and Fast measured
+//! 10.9 s (12 Oct 2026). The `R70H` line is logged before the USB pump starts and still shows
+//! up first, buffered by defmt-bbq.
 //!
 //! ## Run
 //!
@@ -71,7 +90,9 @@ use adafruit_feather_rp2040 as bsp;
 use adafruit_feather_thinkink_discovery::usb_report::{spawn_usb_log_pump, Core1Handles, UsbParts};
 use bsp::hal::clocks::init_clocks_and_plls;
 use bsp::hal::fugit::RateExtU32;
-use bsp::hal::gpio::{FunctionSpi, Pins};
+use bsp::hal::gpio::{
+    FunctionSio, FunctionSpi, Pin, PinId, Pins, PullNone, SioInput, SioOutput, ValidFunction,
+};
 use bsp::hal::{spi, Clock, Sio, Timer, Watchdog};
 use bsp::{entry, pac, XOSC_CRYSTAL_FREQ};
 
@@ -86,9 +107,110 @@ use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::Text;
+use embedded_hal::delay::DelayNs;
+use embedded_hal::digital::{ErrorType as DigitalErrorType, InputPin, OutputPin};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use epdsi::prelude::*;
 use tinybmp::Bmp;
+
+/// Adapts an rp2040-hal GPIO pin to [`epdsi::bus3::DynamicPin`] by switching between the pin's
+/// `FunctionSio<SioOutput>` and `FunctionSio<SioInput>` type states at runtime.
+///
+/// Required because the pre-flight revision read bit-bangs a single MOSI wire in both
+/// directions (see `Spi3Bus`) — rp2040-hal (like most Rust HALs) represents input vs. output as
+/// distinct pin types, so switching direction means converting and re-storing the pin, not just
+/// flipping a register bit through a fixed type.
+enum FlexPinInner<I: PinId> {
+    In(Pin<I, FunctionSio<SioInput>, PullNone>),
+    Out(Pin<I, FunctionSio<SioOutput>, PullNone>),
+}
+
+struct FlexPin<I: PinId>(Option<FlexPinInner<I>>);
+
+impl<I> FlexPin<I>
+where
+    I: PinId + ValidFunction<FunctionSio<SioInput>> + ValidFunction<FunctionSio<SioOutput>>,
+{
+    fn new_output<P: bsp::hal::gpio::PullType>(pin: Pin<I, FunctionSio<SioOutput>, P>) -> Self {
+        Self(Some(FlexPinInner::Out(pin.into_pull_type::<PullNone>())))
+    }
+
+    /// Consumes self, returning the pin configured as a floating input. Panics if the pin is
+    /// currently in output mode — the revision read always leaves the data pin in input mode
+    /// (its last operation is a bit-banged read), so this is safe to call afterward.
+    fn release_as_input(mut self) -> Pin<I, FunctionSio<SioInput>, PullNone> {
+        match self.0.take().expect("FlexPin poisoned") {
+            FlexPinInner::In(p) => p,
+            FlexPinInner::Out(_) => panic!("FlexPin::release_as_input called while in output mode"),
+        }
+    }
+}
+
+impl<I: PinId> DigitalErrorType for FlexPin<I> {
+    type Error = core::convert::Infallible;
+}
+
+impl<I> epdsi::bus3::DynamicPin for FlexPin<I>
+where
+    I: PinId + ValidFunction<FunctionSio<SioInput>> + ValidFunction<FunctionSio<SioOutput>>,
+{
+    type Error = core::convert::Infallible;
+
+    fn set_as_output(&mut self) -> Result<(), Self::Error> {
+        let inner = self.0.take().expect("FlexPin poisoned");
+        self.0 = Some(match inner {
+            FlexPinInner::In(p) => FlexPinInner::Out(p.into_push_pull_output()),
+            out @ FlexPinInner::Out(_) => out,
+        });
+        Ok(())
+    }
+
+    fn set_as_input(&mut self) -> Result<(), Self::Error> {
+        let inner = self.0.take().expect("FlexPin poisoned");
+        self.0 = Some(match inner {
+            FlexPinInner::Out(p) => FlexPinInner::In(p.into_floating_input()),
+            input @ FlexPinInner::In(_) => input,
+        });
+        Ok(())
+    }
+
+    fn set_high(&mut self) -> Result<(), Self::Error> {
+        match self.0.as_mut().expect("FlexPin poisoned") {
+            FlexPinInner::Out(p) => p.set_high(),
+            FlexPinInner::In(_) => panic!("FlexPin::set_high called while in input mode"),
+        }
+    }
+
+    fn set_low(&mut self) -> Result<(), Self::Error> {
+        match self.0.as_mut().expect("FlexPin poisoned") {
+            FlexPinInner::Out(p) => p.set_low(),
+            FlexPinInner::In(_) => panic!("FlexPin::set_low called while in input mode"),
+        }
+    }
+
+    fn is_high(&mut self) -> Result<bool, Self::Error> {
+        match self.0.as_mut().expect("FlexPin poisoned") {
+            FlexPinInner::In(p) => p.is_high(),
+            FlexPinInner::Out(_) => panic!("FlexPin::is_high called while in output mode"),
+        }
+    }
+}
+
+/// Says which rear-sticker family a `R70H` reading belongs to, from the units seen so far.
+fn describe_revision(rev: [u8; 3]) -> &'static str {
+    match rev {
+        [0x09, 0x02, 0x01] => "matches the JD79676AA datasheet (Seeed 0213SW-F52-B2, lot NRA2L21)",
+        [0x89, 0x02, 0x01] => "matches the Good Display GDEY0213F52 unit seen (lot N5B3S02)",
+        [0x09, 0x01, 0x01] => {
+            "Adafruit ZJY122250 unit: this example is for the F52, use jd79661_zjy122250_epd"
+        }
+        [0x03, 0x02, 0x01] => {
+            "matches the JD79661AA datasheet: an F51-family part, use jd79661_zjy122250_epd"
+        }
+        [0xFF, 0xFF, 0xFF] | [0x00, 0x00, 0x00] => "read path not reaching the IC, no answer",
+        _ => "new pattern, record it with the rear sticker text and lot",
+    }
+}
 
 /// 4-color options for 2bpp e-Paper display (JD79676)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -253,17 +375,38 @@ fn main() -> ! {
         &mut pac.RESETS,
     );
 
-    // ThinkInk EPD connections, fixed by the board's FPC socket.
-    let sck = pins.gpio22.into_function::<FunctionSpi>();
-    let mosi = pins.gpio23.into_function::<FunctionSpi>();
+    // ThinkInk EPD connections, fixed by the board's FPC socket. SCK and MOSI start as plain GPIO
+    // so the panel's revision register can be read over a bit-banged 3-wire bus first, then move
+    // into the SPI peripheral.
     let miso = pins.gpio20.into_function::<FunctionSpi>();
     let cs = pins.gpio19.into_push_pull_output();
     let dc = pins.gpio18.into_push_pull_output();
-    let rst = pins.gpio17.into_push_pull_output();
+    let mut rst = pins.gpio17.into_push_pull_output();
+    let sck_gpio = pins.gpio22.into_push_pull_output();
+    let mosi_flex = FlexPin::new_output(pins.gpio23.into_push_pull_output());
     // BUSY pull follows the RP2350 example, the reference verified on known-good hardware.
     // xiao-esp32c3-blinky uses Pull::Up here and its BRINGUP.md calls JD79661 active-LOW; that
     // host was later found faulty, so RP2350 is the one to trust until it is re-tested.
     let busy = pins.gpio16.into_pull_down_input();
+
+    // --- Which panel is this? Read R70H before SPI0 takes SCK and MOSI. ---
+    // Reset with the demo's timings, then read the register. Nothing is powered on or
+    // refreshed here. The log line is buffered by defmt-bbq until the USB pump below starts.
+    timer.delay_ms(20);
+    rst.set_low().unwrap();
+    timer.delay_ms(40);
+    rst.set_high().unwrap();
+    timer.delay_ms(50);
+
+    let mut id_bus = Spi3Bus::new(cs, sck_gpio, mosi_flex, dc, rst, busy);
+    id_bus.wait_busy(&mut timer).unwrap();
+    let rev = id_bus.read_jd7966x_revision(&mut timer).unwrap();
+    defmt::info!("Panel R70H = {:02X}: {}", rev, describe_revision(rev));
+    let (cs, sck_gpio, mosi_flex, dc, rst, busy) = id_bus.release();
+
+    // The revision read always ends in input mode, so the data pin can be released as an input.
+    let sck = sck_gpio.into_function::<FunctionSpi>();
+    let mosi = mosi_flex.release_as_input().into_function::<FunctionSpi>();
 
     let spi = spi::Spi::<_, _, _, 8>::new(pac.SPI0, (mosi, miso, sck)).init(
         &mut pac.RESETS,
@@ -381,9 +524,34 @@ fn main() -> ! {
     epd.write_frame(ColorChannel::BlackWhite, display.as_slice())
         .unwrap();
 
-    let ms = timed_refresh(&mut epd, &mut timer);
-    defmt::info!("Full quad-color refresh: {} ms", ms);
+    let full_ms = timed_refresh(&mut epd, &mut timer);
+    defmt::info!("Full quad-color refresh: {} ms", full_ms);
 
+    epd.sleep(&mut timer).unwrap();
+
+    // --- Phase 2: Jd7966xRefreshMode::Fast, the vendor demo's `EPD_init_Fast()`. ---
+    // The mode is read by `init`, so it takes effect on the next init after the sleep above.
+    // The footer is relabelled so the second frame can be told apart from the first.
+    timer.delay_ms(3000);
+    display.fill_rect(1, 198, 120, 50, QuadColor::White);
+    Text::new("Fast init", Point::new(16, 220), text_style)
+        .draw(&mut display)
+        .unwrap();
+    Text::new("epdsi BWRY", Point::new(11, 240), text_style)
+        .draw(&mut display)
+        .unwrap();
+
+    epd.controller_mut()
+        .set_refresh_mode(Jd7966xRefreshMode::Fast);
+    epd.init(&mut timer).unwrap();
+    epd.write_frame(ColorChannel::BlackWhite, display.as_slice())
+        .unwrap();
+    let fast_ms = timed_refresh(&mut epd, &mut timer);
+    defmt::info!(
+        "Fast quad-color refresh: {} ms (Full was {} ms)",
+        fast_ms,
+        full_ms
+    );
     epd.sleep(&mut timer).unwrap();
 
     defmt::info!("=== done ===");

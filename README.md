@@ -206,7 +206,7 @@ with the board unpowered.
 | :-- | :--- | :--- | :--- |
 | 16 | `ssd1681_gdem0154z90_epd` | 1.54" Tri-Color, 200x200 | SSD1681 |
 | 17 | `ssd1680_gdem0213b74_epd` | 2.13" Mono, 122x250 | SSD1680 |
-| 18 | `jd79661_zjy122250_epd` | 2.13" Quad-Color, 122x250 | JD79661 |
+| 18 | `jd79661_zjy122250_epd` | 2.13" Quad-Color, 122x250. Logs the panel's `R70H` first (needs `epdsi` 0.8.1 or later; verified on the Feather RP2040 ThinkInk, 12 Oct 2026) | JD79661 |
 | 19 | `ssd1680_gdey0266z90_epd` | 2.66" Tri-Color, 152x296 | SSD1680 |
 | 20 | `uc8253_se0352n14_epd` | 3.52" Tri-Color, 240x360 | UC8253 |
 | 21 | `uc8253_gdey037t03_epd` | 3.7" Mono, 240x416 | UC8253 |
@@ -243,7 +243,7 @@ both are flagged as unresolved in the relevant example rather than quietly corre
 | Example | Panel | Controller |
 | :--- | :--- | :--- |
 | `jd79660_gdem0154f51h_epd` | 1.54" Quad-Color, 200x200 | JD79660A |
-| `jd79676_gdey0213f52_epd` | 2.13" Quad-Color, 122x250 (not the F51: check the `0213SW-F52-B2` sticker) | JD79676A |
+| `jd79676_gdey0213f52_epd` | 2.13" Quad-Color, 122x250 (not the F51: check the `0213SW-F52-B2` sticker). It logs the panel's `R70H` revision first. Phase 2 refreshes with `Jd7966xRefreshMode::Fast` and needs `epdsi` 0.8.1 or later; verified on the Feather RP2040 ThinkInk on 12 Oct 2026: Full 15914 ms, Fast 10944 ms | JD79676A |
 | `ist7163_gdem037f51_epd` | 3.7" Quad-Color, 240x416 (needs `epdsi` 0.7.1, verified on the Feather RP2040 ThinkInk) | IST7163 |
 | `ssd1680_gdey0266z90_tri_epd` | 2.66" Tri-Color, `PageBufferPair` API | SSD1680 |
 | `ssd1681_gdem0154z90_tri_epd` | 1.54" Tri-Color, `PageBufferPair` API | SSD1681 |
