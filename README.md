@@ -211,6 +211,7 @@ with the board unpowered.
 | 20 | `uc8253_se0352n14_epd` | 3.52" Tri-Color, 240x360 | UC8253 |
 | 21 | `uc8253_gdey037t03_epd` | 3.7" Mono, 240x416 | UC8253 |
 | 22 | `ssd1677_gdeq0426t82_epd` | 4.26" Mono, 800x480 | SSD1677 |
+| 23 | `uc8151d_gdew0215t12_epd` | 2.15" Mono, 112x208, four screens: full, whole-frame partial, two windowed partials (needs `epdsi` 0.9.1; runs in about 11 s, verified on this board) | UC8151D |
 
 ```bash
 cargo run --release --example ssd1681_gdem0154z90_epd   # and so on
