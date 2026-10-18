@@ -253,6 +253,7 @@ both are flagged as unresolved in the relevant example rather than quietly corre
 | `ssd1680_gdey0266t90_gray4_epd` | 2.66" 4-level grayscale | SSD1680 |
 | `ssd1685_gdey0266t90h_epd` | 2.66" Mono, 184x360 (a different glass from `GDEY0266T90`; needs `epdsi` 0.8.0) | SSD1685 |
 | `ssd1677_gdeq0426t82_gray4_epd` | 4.26" 4-level grayscale | SSD1677 |
+| `ssd1677_gdeq0426t82_macpaint` | 4.26" Mono, 800x480 landscape: 640x480 MacPaint canvas plus 361 windowed `0xFC` partial updates (handwriting animation) | SSD1677 |
 | `ssd1680_gdem0213b74_gray4_epd` | 2.13" 4-level grayscale, 122x250 | SSD1680 |
 
 The three `_tri_epd` entries are full-parity companions to their base example (`ssd1680_gdey0266z90_epd`,
@@ -269,6 +270,8 @@ see each panel's `epdsi` doc for the provenance note. `GDEQ0426T82`'s Gray4 mode
 assumed:**
 - The three `_tri_epd` variants: confirmed on this board, real measured output below.
 - `ssd1677_gdeq0426t82_gray4_epd`: confirmed rendering four distinct gray levels on this board.
+- `ssd1677_gdeq0426t82_macpaint`: **not yet confirmed on this board** — builds and passes CI, has not
+  been run on the panel.
 - `ssd1680_gdey0266t90_epd`: **not yet confirmed on this board** — its doc comment only quotes an
   RP2350 reference figure and says it "logs its own measured timings," not that it has been run
   here.
