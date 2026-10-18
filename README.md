@@ -244,6 +244,7 @@ both are flagged as unresolved in the relevant example rather than quietly corre
 | Example | Panel | Controller |
 | :--- | :--- | :--- |
 | `jd79660_gdem0154f51h_epd` | 1.54" Quad-Color, 200x200 | JD79660A |
+| `ssd2681_gdem0154f61h_epd` | 1.54" Quad-Color, 200x200 (not the F51H: check the `0154SW-F61H-B2` sticker). Phase 1 `Ssd2681RefreshMode::Full`, phase 2 `Fast`, both timed. Needs `epdsi` 0.9.2 or later. Verified on the Feather RP2040 ThinkInk on 17 Oct 2026: Full 20593 ms, Fast 12342 ms (XIAO ESP32-C3: 20588 and 12338 ms) | SSD2681 |
 | `jd79676_gdey0213f52_epd` | 2.13" Quad-Color, 122x250 (not the F51: check the `0213SW-F52-B2` sticker). It logs the panel's `R70H` revision first. Phase 2 refreshes with `Jd7966xRefreshMode::Fast` and needs `epdsi` 0.8.1 or later; verified on the Feather RP2040 ThinkInk on 12 Oct 2026: Full 15914 ms, Fast 10944 ms | JD79676A |
 | `ist7163_gdem037f51_epd` | 3.7" Quad-Color, 240x416 (needs `epdsi` 0.7.1, verified on the Feather RP2040 ThinkInk) | IST7163 |
 | `ssd1680_gdey0266z90_tri_epd` | 2.66" Tri-Color, `PageBufferPair` API | SSD1680 |
@@ -303,6 +304,7 @@ Phase 1 panel test: 17366 ms · Phase 2 Full tri-color: 17365 ms
 
 ```bash
 cargo run --release --example jd79660_gdem0154f51h_epd
+cargo run --release --example ssd2681_gdem0154f61h_epd
 cargo run --release --example ssd1680_gdey0266z90_tri_epd
 cargo run --release --example ssd1681_gdem0154z90_tri_epd
 cargo run --release --example uc8253_se0352n14_tri_epd
