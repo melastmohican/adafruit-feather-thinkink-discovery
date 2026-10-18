@@ -270,8 +270,8 @@ see each panel's `epdsi` doc for the provenance note. `GDEQ0426T82`'s Gray4 mode
 assumed:**
 - The three `_tri_epd` variants: confirmed on this board, real measured output below.
 - `ssd1677_gdeq0426t82_gray4_epd`: confirmed rendering four distinct gray levels on this board.
-- `ssd1677_gdeq0426t82_macpaint`: **not yet confirmed on this board** — builds and passes CI, has not
-  been run on the panel.
+- `ssd1677_gdeq0426t82_macpaint`: confirmed on this board (17 Oct 2026): MacPaint canvas draws, then the
+  handwriting animation plays.
 - `ssd1680_gdey0266t90_epd`: **not yet confirmed on this board** — its doc comment only quotes an
   RP2350 reference figure and says it "logs its own measured timings," not that it has been run
   here.
