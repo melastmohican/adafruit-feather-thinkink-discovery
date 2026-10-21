@@ -327,7 +327,31 @@ is what identified a failing XIAO ESP32-C3.
 cargo run --release --example epd_diag_partial
 ```
 
-> Examples 16-23 report over USB serial, logged live as each phase completes — see
+### 24. SSD1680 Partial, Then Full With No `init` (`examples/epd_diag_partial_then_full.rs`)
+
+Diagnostic for the 2.13" panel. After a `Partial` refresh the SSD1680 has been hard-reset, so this
+checks whether going back to `Full` needs `init` again or only `set_refresh_mode(Full)`. It draws a
+striped pattern with a block in each corner, goes `Partial` then `Full` with no `init`, and holds the
+result for 20 seconds so it can be photographed. It then repeats with an `init` as the control. A
+sideways shift or a different border colour in the no-`init` photo means the reset lost registers.
+
+```bash
+cargo run --release --example epd_diag_partial_then_full
+```
+
+### 25. SSD1677 Partial, Then Full With No `init` (`examples/epd_diag_partial_then_full_ssd1677.rs`)
+
+The same check as example 24, for the 4.26" `GDEQ0426T82`. The SSD1677 partial path also hard-resets
+the chip before the refresh, so this goes `Partial` then `Full` with no `init` and holds the result
+for 20 seconds to photograph, then repeats with an `init` as the control. The pattern is native
+800x480 bands with a block in each corner, so a wrong gate count or a shifted image shows up as
+missing corner blocks. Swap panels with the board unpowered.
+
+```bash
+cargo run --release --example epd_diag_partial_then_full_ssd1677
+```
+
+> Examples 16-25 report over USB serial, logged live as each phase completes — see
 > [Logging without a probe](#logging-without-a-probe).
 
 ## Flashing and logging
