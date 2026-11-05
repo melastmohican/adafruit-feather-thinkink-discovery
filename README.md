@@ -253,7 +253,7 @@ both are flagged as unresolved in the relevant example rather than quietly corre
 | `ssd1680_gdey0266t90_epd` | 2.66" Mono, 152x296 | SSD1680 |
 | `ssd1680_gdey0266t90_gray4_epd` | 2.66" 4-level grayscale | SSD1680 |
 | `ssd1685_gdey0266t90h_epd` | 2.66" Mono, 184x360 (a different glass from `GDEY0266T90`; needs `epdsi` 0.8.0) | SSD1685 |
-| `ssd1683_gdey042t81_epd` | 4.2" Mono, 400x300 (needs an `epdsi` release after 0.10.0) | SSD1683 |
+| `ssd1683_gdey042t81_epd` | 4.2" Mono, 400x300 (needs `epdsi` 0.10.1) | SSD1683 |
 | `ssd1683_gdey042t81_gray4_epd` | 4.2" 4-level grayscale on the built-in waveform (`Gray4Otp`) | SSD1683 |
 | `ssd1677_gdeq0426t82_gray4_epd` | 4.26" 4-level grayscale | SSD1677 |
 | `ssd1677_gdeq0426t82_macpaint` | 4.26" Mono, 800x480 landscape: 640x480 MacPaint canvas plus 361 windowed `0xFC` partial updates (handwriting animation) | SSD1677 |
@@ -285,8 +285,7 @@ assumed:**
   repo carries a temporary `[patch.crates-io]` path override until that release.
 - `ssd1683_gdey042t81_epd`: confirmed on this board (5 Nov 2026). Measured: Phase 1 Full 1585 ms,
   Phase 2 partial 411 ms each (five updates), Phase 3 cleanup 1585 ms, Phase 4 `FastFull` 1667 ms, so
-  `FastFull` is slower than `Full` on this panel. Needs an `epdsi` release after 0.10.0, so this repo
-  carries a temporary `[patch.crates-io]` path override until that release.
+  `FastFull` is slower than `Full` on this panel. Needs `epdsi` 0.10.1 or later.
 - `ssd1683_gdey042t81_gray4_epd`: confirmed on this board (5 Nov 2026). Both screens render correctly;
   the `Gray4Otp` refresh takes about 2.4 s including the plane writes.
 - `ssd1680_gdey0266t90_gray4_epd`: **explicitly not yet verified on hardware**, per its own doc
