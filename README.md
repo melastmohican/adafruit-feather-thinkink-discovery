@@ -212,6 +212,7 @@ with the board unpowered.
 | 21 | `uc8253_gdey037t03_epd` | 3.7" Mono, 240x416 | UC8253 |
 | 22 | `ssd1677_gdeq0426t82_epd` | 4.26" Mono, 800x480 | SSD1677 |
 | 23 | `uc8151d_gdew0215t12_epd` | 2.15" Mono, 112x208, four screens: full, whole-frame partial, two windowed partials (needs `epdsi` 0.9.1; runs in about 11 s, verified on this board) | UC8151D |
+| 24 | `jd79661_gdey029f52_epd` | 2.9" Quad-Color, 128x296, two full refreshes with a 20 s rest. Logs the panel's `R70H` first (`83 02 01` on the `029SW-F52-B2` unit). Needs the `GDEY029F52` panel type, newer than `epdsi` 0.10.1; verified on this board, 5 Nov 2026, 15285 ms and 15293 ms | JD79661 |
 
 ```bash
 cargo run --release --example ssd1681_gdem0154z90_epd   # and so on
